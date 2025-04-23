@@ -1,0 +1,10 @@
+
+version: '3.8'
+
+services:
+  etl:
+    build: .
+    container_name: etl_pipeline
+    volumes:
+      - ./data:/app/data
+    command: python src/etl_pipeline.py
