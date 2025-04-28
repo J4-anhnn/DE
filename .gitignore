@@ -1,0 +1,35 @@
+# Ignore Terraform files
+*.tfstate
+*.tfstate.backup
+.terraform/
+terraform.tfvars
+override.tf
+override.tf.json
+*override.tf
+*override.tf.json
+
+# Ignore large files (specific to your error)
+Data-Engineering/Day4/ex3/.terraform/*
+Data-Engineering/Day4/ex1+2/.terraform/*
+Data-Engineering/Day4/ex3/*.json
+
+# Ignore other large files
+*.bak
+*.log
+*.tar.gz
+*.zip
+*.json
+
+# Ignore IDE and editor files
+.idea/
+.vscode/
+.DS_Store
+
+# Ignore other common large file types
+*.iso
+*.mp4
+*.mp3
+*.bin
+*.7z
+
+
