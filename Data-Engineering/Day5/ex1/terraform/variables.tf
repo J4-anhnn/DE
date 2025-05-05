@@ -25,13 +25,13 @@ variable "db_tier" {
 variable "db_name" {
   description = "The name of the database"
   type        = string
-  default     = "manhvd_exercise_db"
+  default     = "anhnn_exercise_db"
 }
 
 variable "db_user" {
   description = "The database user name"
   type        = string
-  default     = "manhvd"
+  default     = "anhnn"
 }
 
 variable "db_password" {
