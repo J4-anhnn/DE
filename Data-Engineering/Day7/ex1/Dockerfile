@@ -11,7 +11,7 @@ COPY . /app
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Mở cổng Flask sẽ chạy
-EXPOSE 5001
+EXPOSE 8080
 
 # Lệnh chạy ứng dụng
 CMD ["python", "app.py"]
