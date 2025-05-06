@@ -1,0 +1,18 @@
+
+version: '3.8'
+
+services:
+  kestra:
+    image: kestra/kestra:latest-full
+    container_name: kestra
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    volumes:
+      - ./data:/app/storage
+      - ./kestra.yml:/app/config.yml
+      - ./flows:/app/flows
+    environment:
+      - KESTRA_CONFIGURATION=config.yml
+    command: server standalone
+    restart: always
