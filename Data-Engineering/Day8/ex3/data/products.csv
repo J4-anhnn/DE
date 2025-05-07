@@ -1,5 +1,31 @@
 product_id,product_name,category
-101,Widget A,Gadgets
-102,Widget B,Gadgets
-103,Widget C,Tools
-104,Widget D,Tools
+1,Widget A,Gadgets
+2,Widget B,Gadgets
+3,Widget C,Tools
+4,Widget D,Tools
+5,Gizmo X,Gadgets
+6,Gizmo Y,Gadgets
+7,Hammer Pro,Tools
+8,Screwdriver Max,Tools
+9,DrillMaster 3000,Tools
+10,Flashlight Ultra,Electronics
+11,Smart Plug,Electronics
+12,Phone Holder,Accessories
+13,Laptop Stand,Accessories
+14,USB Hub 4-Port,Electronics
+15,Mouse Pad XL,Accessories
+16,Keyboard Cover,Accessories
+17,Power Strip Pro,Electronics
+18,LED Desk Lamp,Electronics
+19,Bluetooth Speaker,Electronics
+20,Noise Cancelling Headphones,Electronics
+21,Notebook 120 Pages,Stationery
+22,Pen Gel Ink,Stationery
+23,Marker Set 12 Colors,Stationery
+24,Stapler Metal,Stationery
+25,File Folder Pack,Stationery
+26,Coffee Mug Large,Kitchen
+27,Water Bottle 1L,Kitchen
+28,Blender Mini,Kitchen
+29,Toaster 2-Slice,Kitchen
+30,Electric Kettle 1.5L,Kitchen
