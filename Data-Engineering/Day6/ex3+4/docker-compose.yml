@@ -2,26 +2,31 @@ version: "3"
 services:
   kestra:
     image: kestra/kestra:latest
+    volumes:
+      - ./plugin-config.yml:/app/config/plugin-config.yml
     environment:
+      - KESTRA_CONFIGURATION=plugin-config.yml
       - KESTRA_REPOSITORY_TYPE=postgres
-      - KESTRA_REPOSITORY_URL=jdbc:postgresql://postgres:5432/kestra
+      - KESTRA_REPOSITORY_URL=jdbc:postgresql://postgres:15432/kestra
       - KESTRA_REPOSITORY_USERNAME=kestra
       - KESTRA_REPOSITORY_PASSWORD=kestra
+      - KESTRA_PLUGINS=io.kestra.plugin:http,io.kestra.plugin:gcs,io.kestra.plugin:python
     ports:
-      - "8080:8080"
+      - "9091:8080"
     depends_on:
       - postgres
     networks:
       - kestra-network
     command: server local
+
   postgres:
-    image: postgres:13
+    image: postgres:latest
     environment:
-      - POSTGRES_USER=kestra
-      - POSTGRES_PASSWORD=kestra
-      - POSTGRES_DB=kestra
+      POSTGRES_USER: kestra
+      POSTGRES_PASSWORD: kestra
+      POSTGRES_DB: kestra
     ports:
-      - "5432:5432"
+      - "15433:5432"
     networks:
       - kestra-network
 

@@ -1,23 +1,4 @@
-
 kestra:
   server:
     basic-auth:
-      enabled: true
-      users:
-        - username: kestra
-          password: kestra
-
-  repository:
-    type: h2
-
-  storage:
-    type: local
-    local:
-      base-path: /app/storage
-
-  queue:
-    type: local
-
-  tasks:
-    tmp-dir:
-      path: /tmp/kestra
+      enabled: false

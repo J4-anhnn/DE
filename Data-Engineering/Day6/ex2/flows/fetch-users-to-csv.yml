@@ -1,0 +1,52 @@
+id: fetch-users-to-csv
+namespace: dev
+
+tasks:
+  - id: fetch_and_convert
+    type: io.kestra.plugin.scripts.python.Script
+    outputFiles:
+      - "output.csv"
+    script: |
+      import requests
+      import csv
+      import datetime
+
+      print("Fetching users data from API...")
+      response = requests.get("https://jsonplaceholder.typicode.com/users")
+      data = response.json()
+
+      print("Processing data...")
+      processed_data = []
+      for user in data:
+          processed_user = {
+              'id': user['id'],
+              'name': user['name'],
+              'username': user['username'],
+              'email': user['email'],
+              'street': user['address']['street'],
+              'suite': user['address']['suite'],
+              'city': user['address']['city'],
+              'zipcode': user['address']['zipcode'],
+              'company_name': user['company']['name'],
+              'company_catchphrase': user['company']['catchPhrase'],
+              'company_bs': user['company']['bs'],
+              'processed_at': datetime.datetime.now().isoformat()
+          }
+          processed_data.append(processed_user)
+
+      print("Writing to CSV...")
+      with open("output.csv", "w", newline="") as csvfile:
+          writer = csv.DictWriter(csvfile, fieldnames=processed_data[0].keys())
+          writer.writeheader()
+          writer.writerows(processed_data)
+
+      print(f"Wrote {len(processed_data)} rows to output.csv")
+
+  - id: log_completion
+    type: io.kestra.core.tasks.log.Log
+    message: "Workflow completed. CSV saved."
+
+errors:
+  - id: log_error
+    type: io.kestra.core.tasks.log.Log
+    message: "Workflow FAILED. Please check logs."

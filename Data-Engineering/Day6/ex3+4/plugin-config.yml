@@ -1,0 +1,13 @@
+gcp:
+  credentials: "spartan-cosmos-457603-e0-b6068efd1827.json"
+  projectId: "spartan-cosmos-457603-e0"
+
+io.kestra.plugin.http:
+  - classpath: io.kestra.plugin.core.http.Request
+
+io.kestra.plugin.gcp.gcs:
+  - classpath: io.kestra.plugin.gcp.gcs.Download
+  - classpath: io.kestra.plugin.gcp.gcs.Upload
+
+io.kestra.plugin.scripts.python:
+  - classpath: io.kestra.plugin.scripts.python.Script

@@ -1,0 +1,4 @@
+kestra:
+  repository:
+    type: postgres
+    url: jdbc:postgresql://postgres:5432/kestra

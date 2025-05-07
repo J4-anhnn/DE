@@ -1,19 +1,25 @@
-version: "3"
+version: "3.8"
+
 services:
   kestra:
     image: kestra/kestra:latest
+    volumes:
+      - ./plugin-config.yml:/app/config/plugin-config.yml
+      - ./flows:/app/flows
     environment:
+      - KESTRA_CONFIGURATION=plugin-config.yml
       - KESTRA_REPOSITORY_TYPE=postgres
       - KESTRA_REPOSITORY_URL=jdbc:postgresql://postgres:5432/kestra
       - KESTRA_REPOSITORY_USERNAME=kestra
       - KESTRA_REPOSITORY_PASSWORD=kestra
     ports:
-      - "8080:8080"
+      - "9090:8080"
     depends_on:
       - postgres
     networks:
       - kestra-network
     command: server local
+
   postgres:
     image: postgres:13
     environment:
@@ -21,7 +27,7 @@ services:
       - POSTGRES_PASSWORD=kestra
       - POSTGRES_DB=kestra
     ports:
-      - "5432:5432"
+      - "15432:5432"
     networks:
       - kestra-network
 

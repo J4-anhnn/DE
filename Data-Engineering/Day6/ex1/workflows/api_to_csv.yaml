@@ -1,0 +1,31 @@
+id: api-to-csv
+namespace: demo
+
+tasks:
+  - id: fetch-api
+    type: io.kestra.plugin.fs.http.Request
+    uri: "https://jsonplaceholder.typicode.com/users"
+    method: GET
+
+  - id: json-to-csv
+    type: io.kestra.plugin.scripts.python.Script
+    interpreter: python3
+    inputFiles:
+      - "{{ outputs.fetch-api.body | dump }}"
+    script: |
+      import json
+      import csv
+
+      with open("input.json") as f:
+          data = json.load(f)
+
+      keys = data[0].keys()
+      with open("output.csv", "w", newline="") as output_file:
+          dict_writer = csv.DictWriter(output_file, keys)
+          dict_writer.writeheader()
+          dict_writer.writerows(data)
+
+  - id: save-csv
+    type: io.kestra.plugin.local.filesystem.FileMove
+    from: "output.csv"
+    to: "/app/data/users.csv"
