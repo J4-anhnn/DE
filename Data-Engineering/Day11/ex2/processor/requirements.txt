@@ -1,0 +1,7 @@
+kafka-python==2.0.2
+google-cloud-bigquery==3.11.0
+# pandas được cài đặt riêng trong Dockerfile
+python-dotenv==1.0.0
+matplotlib==3.7.1
+avro-python3==1.10.2
+confluent-kafka[avro]==2.1.0
