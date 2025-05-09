@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.0.1
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+
+  kafka:
+    image: confluentinc/cp-kafka:7.0.1
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+  spark:
+    image: bitnami/spark:3.3.2-debian-11-r0
+    depends_on:
+      - kafka
+    command: >
+      bash -c "sleep 15 &&
+      /opt/bitnami/spark/bin/spark-submit
+      --master local[*]
+      --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.3.2
+      /app/spark_app.py"
+    volumes:
+      - ./spark:/app
+    environment:
+      - SPARK_MODE=client
+
+  producer:
+    build: ./producer
+    depends_on:
+      - kafka
+    command: ["python", "main.py"]
+    volumes:
+      - ./producer:/app
+    working_dir: /app

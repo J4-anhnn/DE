@@ -1,0 +1,15 @@
+# kestra-flows/pipeline.yaml
+id: simple-data-pipeline
+namespace: data
+tasks:
+  - id: ingest_data
+    type: io.kestra.plugin.scripts.shell.Commands
+    commands:
+      - python /path/to/scripts/kafka_producer.py
+
+  - id: process_data
+    type: io.kestra.plugin.scripts.shell.Commands
+    commands:
+      - spark-submit /path/to/scripts/spark_consumer.py
+    dependsOn:
+      - ingest_data
