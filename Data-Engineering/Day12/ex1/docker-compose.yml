@@ -4,6 +4,8 @@ services:
     build: .
     volumes:
       - .:/dbt_project
+    ports:
+      - "8080:8080"
     command: tail -f /dev/null
     depends_on:
       - db
