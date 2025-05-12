@@ -49,10 +49,10 @@ case $1 in
     print_header "Setting up Docker environment"
     
     print_step "Stopping any existing containers"
-    docker-compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+    docker compose down --volumes --remove-orphans >/dev/null 2>&1 || true
     
     print_step "Building and starting containers"
-    docker-compose up --build -d
+    docker compose up --build -d
     
     print_step "Waiting for PostgreSQL to be ready"
     sleep 5
@@ -64,7 +64,7 @@ case $1 in
     print_header "Initializing database with sample data"
     
     print_step "Creating tables and loading sample data"
-    docker-compose exec db psql -U myuser -d mydatabase -c "
+    docker compose exec db psql -U myuser -d mydatabase -c "
       CREATE TABLE IF NOT EXISTS customers (
         customer_id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
@@ -98,7 +98,7 @@ case $1 in
     "
     
     print_step "Verifying data was loaded"
-    docker-compose exec db psql -U myuser -d mydatabase -c "
+    docker compose exec db psql -U myuser -d mydatabase -c "
       SELECT 'Customers: ' || COUNT(*) FROM customers;
       SELECT 'Orders: ' || COUNT(*) FROM orders;
     "
@@ -109,10 +109,10 @@ case $1 in
   run)
     print_header "Running dbt models"
     print_step "Executing dbt run command"
-    docker-compose exec dbt bash -c "cd /dbt_project/my_dbt_project && dbt run"
+    docker compose exec dbt bash -c "cd /dbt_project/my_dbt_project && dbt run"
     
     print_step "Verifying models were created"
-    docker-compose exec db psql -U myuser -d mydatabase -c "
+    docker compose exec db psql -U myuser -d mydatabase -c "
       SELECT 'Transformed Orders: ' || COUNT(*) FROM public.transformed_orders;
       SELECT 'Example Analysis: ' || COUNT(*) FROM public.example_analysis;
     "
@@ -122,7 +122,7 @@ case $1 in
 
   test)
     print_header "Running dbt tests"
-    docker-compose exec dbt bash -c "cd /dbt_project/my_dbt_project && dbt test"
+    docker compose exec dbt bash -c "cd /dbt_project/my_dbt_project && dbt test"
     echo -e "${GREEN}dbt tests have been completed.${NC}"
     ;;
 
@@ -130,13 +130,13 @@ case $1 in
     print_header "Generating and serving dbt documentation"
     
     print_step "Stopping any existing dbt docs server"
-    docker-compose exec dbt bash -c "pkill -f 'dbt docs serve' || true" >/dev/null 2>&1 || true
+    docker compose exec dbt bash -c "pkill -f 'dbt docs serve' || true" >/dev/null 2>&1 || true
     
     print_step "Generating documentation"
-    docker-compose exec dbt bash -c "cd /dbt_project/my_dbt_project && dbt docs generate"
+    docker compose exec dbt bash -c "cd /dbt_project/my_dbt_project && dbt docs generate"
     
     print_step "Starting documentation server (port 8080)"
-    docker-compose exec -d dbt bash -c "cd /dbt_project/my_dbt_project && dbt docs serve --port=8080 --host=0.0.0.0"
+    docker compose exec -d dbt bash -c "cd /dbt_project/my_dbt_project && dbt docs serve --port=8080 --host=0.0.0.0"
     
     echo "Waiting for docs server to start..."
     sleep 3
@@ -147,13 +147,13 @@ case $1 in
 
   down)
     print_header "Stopping Docker containers"
-    docker-compose down --volumes
+    docker compose down --volumes
     echo -e "${GREEN}Docker containers have been stopped.${NC}"
     ;;
 
   shell)
     print_header "Opening shell in dbt container"
-    docker-compose exec dbt bash
+    docker compose exec dbt bash
     ;;
 
   all)
@@ -161,14 +161,14 @@ case $1 in
     
     # Setup
     print_step "Setting up Docker environment"
-    docker-compose down --volumes --remove-orphans >/dev/null 2>&1 || true
-    docker-compose up --build -d
+    docker compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+    docker compose up --build -d
     sleep 5
     echo -e "${GREEN}Docker environment is ready.${NC}"
     
     # Init
     print_header "Initializing database with sample data"
-    docker-compose exec db psql -U myuser -d mydatabase -c "
+    docker compose exec db psql -U myuser -d mydatabase -c "
       CREATE TABLE IF NOT EXISTS customers (
         customer_id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
@@ -204,20 +204,20 @@ case $1 in
     
     # Run
     print_header "Running dbt models"
-    docker-compose exec dbt bash -c "cd /dbt_project/my_dbt_project && dbt run"
+    docker compose exec dbt bash -c "cd /dbt_project/my_dbt_project && dbt run"
     echo -e "${GREEN}dbt models have been run successfully.${NC}"
     
     # Test
     print_header "Running dbt tests"
-    docker-compose exec dbt bash -c "cd /dbt_project/my_dbt_project && dbt test"
+    docker compose exec dbt bash -c "cd /dbt_project/my_dbt_project && dbt test"
     echo -e "${GREEN}dbt tests have been completed.${NC}"
     
     # Generate docs
     print_step "Generating documentation"
-    docker-compose exec dbt bash -c "cd /dbt_project/my_dbt_project && dbt docs generate"
+    docker compose exec dbt bash -c "cd /dbt_project/my_dbt_project && dbt docs generate"
     
     print_step "Starting documentation server (port 8080)"
-    docker-compose exec -d dbt bash -c "cd /dbt_project/my_dbt_project && dbt docs serve --port=8080 --host=0.0.0.0"
+    docker compose exec -d dbt bash -c "cd /dbt_project/my_dbt_project && dbt docs serve --port=8080 --host=0.0.0.0"
     
     echo -e "\n${GREEN}Complete workflow has finished successfully!${NC}"
     echo -e "${GREEN}Access dbt documentation at: http://localhost:8080${NC}"
