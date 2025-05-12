@@ -5,11 +5,16 @@ set -e
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Function to print section headers
 print_header() {
   echo -e "\n${YELLOW}=== $1 ===${NC}\n"
+}
+
+print_step() {
+  echo -e "${BLUE}>> $1${NC}"
 }
 
 # Function to check if Docker is running
@@ -42,12 +47,23 @@ check_docker
 case $1 in
   setup)
     print_header "Setting up Docker environment"
-    docker-compose up -d
+    
+    print_step "Stopping any existing containers"
+    docker-compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+    
+    print_step "Building and starting containers"
+    docker-compose up --build -d
+    
+    print_step "Waiting for PostgreSQL to be ready"
+    sleep 5
+    
     echo -e "${GREEN}Docker environment is ready.${NC}"
     ;;
 
   init)
     print_header "Initializing database with sample data"
+    
+    print_step "Creating tables and loading sample data"
     docker-compose exec db psql -U myuser -d mydatabase -c "
       CREATE TABLE IF NOT EXISTS customers (
         customer_id SERIAL PRIMARY KEY,
@@ -80,12 +96,27 @@ case $1 in
       FROM generate_series(1, 500) i
       WHERE NOT EXISTS (SELECT 1 FROM orders);
     "
+    
+    print_step "Verifying data was loaded"
+    docker-compose exec db psql -U myuser -d mydatabase -c "
+      SELECT 'Customers: ' || COUNT(*) FROM customers;
+      SELECT 'Orders: ' || COUNT(*) FROM orders;
+    "
+    
     echo -e "${GREEN}Database initialized with sample data.${NC}"
     ;;
 
   run)
     print_header "Running dbt models"
+    print_step "Executing dbt run command"
     docker-compose exec dbt bash -c "cd /dbt_project/my_dbt_project && dbt run"
+    
+    print_step "Verifying models were created"
+    docker-compose exec db psql -U myuser -d mydatabase -c "
+      SELECT 'Transformed Orders: ' || COUNT(*) FROM public.transformed_orders;
+      SELECT 'Example Analysis: ' || COUNT(*) FROM public.example_analysis;
+    "
+    
     echo -e "${GREEN}dbt models have been run successfully.${NC}"
     ;;
 
@@ -97,30 +128,26 @@ case $1 in
 
   docs)
     print_header "Generating and serving dbt documentation"
-    # Dừng bất kỳ tiến trình docs server nào đang chạy
-    docker-compose exec dbt bash -c "pkill -f 'dbt docs serve' || true"
     
-    # Tạo tài liệu
+    print_step "Stopping any existing dbt docs server"
+    docker-compose exec dbt bash -c "pkill -f 'dbt docs serve' || true" >/dev/null 2>&1 || true
+    
+    print_step "Generating documentation"
     docker-compose exec dbt bash -c "cd /dbt_project/my_dbt_project && dbt docs generate"
-    echo -e "${GREEN}Documentation generated.${NC}"
     
-    # Cập nhật docker-compose.yml để mở cổng 8080
-    if ! grep -q "8080:8080" docker-compose.yml; then
-      echo -e "${YELLOW}Adding port 8080 to docker-compose.yml...${NC}"
-      sed -i '' -e '/dbt:/,/db:/ s/depends_on:/ports:\n      - "8080:8080"\n    depends_on:/' docker-compose.yml
-      echo -e "${GREEN}Port 8080 added to docker-compose.yml${NC}"
-      echo -e "${YELLOW}Restarting containers...${NC}"
-      docker-compose up -d
-    fi
-    
-    # Chạy server với cổng 8080
+    print_step "Starting documentation server (port 8080)"
     docker-compose exec -d dbt bash -c "cd /dbt_project/my_dbt_project && dbt docs serve --port=8080 --host=0.0.0.0"
-    echo -e "${GREEN}Documentation server started at http://localhost:8080${NC}"
+    
+    echo "Waiting for docs server to start..."
+    sleep 3
+    
+    echo -e "${GREEN}Documentation server started!${NC}"
+    echo -e "${GREEN}Access it at: http://localhost:8080${NC}"
     ;;
 
   down)
     print_header "Stopping Docker containers"
-    docker-compose down
+    docker-compose down --volumes
     echo -e "${GREEN}Docker containers have been stopped.${NC}"
     ;;
 
@@ -131,8 +158,12 @@ case $1 in
 
   all)
     print_header "Running complete workflow"
+    
     # Setup
-    docker-compose up -d
+    print_step "Setting up Docker environment"
+    docker-compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+    docker-compose up --build -d
+    sleep 5
     echo -e "${GREEN}Docker environment is ready.${NC}"
     
     # Init
@@ -181,7 +212,15 @@ case $1 in
     docker-compose exec dbt bash -c "cd /dbt_project/my_dbt_project && dbt test"
     echo -e "${GREEN}dbt tests have been completed.${NC}"
     
+    # Generate docs
+    print_step "Generating documentation"
+    docker-compose exec dbt bash -c "cd /dbt_project/my_dbt_project && dbt docs generate"
+    
+    print_step "Starting documentation server (port 8080)"
+    docker-compose exec -d dbt bash -c "cd /dbt_project/my_dbt_project && dbt docs serve --port=8080 --host=0.0.0.0"
+    
     echo -e "\n${GREEN}Complete workflow has finished successfully!${NC}"
+    echo -e "${GREEN}Access dbt documentation at: http://localhost:8080${NC}"
     ;;
 
   *)
