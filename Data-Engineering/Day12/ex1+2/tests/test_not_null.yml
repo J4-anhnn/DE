@@ -1,0 +1,11 @@
+version: 2
+
+models:
+  - name: transformed_orders
+    columns:
+      - name: customer_id
+        tests:
+          - not_null
+      - name: customer_name
+        tests:
+          - not_null
