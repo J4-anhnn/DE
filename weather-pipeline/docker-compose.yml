@@ -1,0 +1,144 @@
+version: '3.8'
+
+x-common-env: &common-env
+  GOOGLE_APPLICATION_CREDENTIALS: /app/creds/creds.json
+  OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY}
+  GCP_PROJECT_ID: ${GCP_PROJECT_ID}
+  GCS_BUCKET: ${GCS_BUCKET}
+
+services:
+  # Kafka services
+  zookeeper:
+    image: bitnami/zookeeper:3.8
+    container_name: zookeeper
+    environment:
+      ALLOW_ANONYMOUS_LOGIN: "yes"
+    ports:
+      - "2181:2181"
+    networks:
+      - weather-net
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: bitnami/kafka:3.4
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_CFG_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CFG_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+      KAFKA_CREATE_TOPICS: "weather-raw:1:1,weather-processed:1:1"
+    ports:
+      - "9092:9092"
+    networks:
+      - weather-net
+    healthcheck:
+      test: ["CMD", "kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Kafka producer
+  weather-producer:
+    build:
+      context: .
+      dockerfile: docker/kafka/Dockerfile
+    container_name: weather-producer
+    environment:
+      <<: *common-env
+    volumes:
+      - ./creds:/app/creds:ro
+      - ./data:/app/data
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - weather-net
+
+  # Kafka consumer
+  weather-consumer:
+    build:
+      context: .
+      dockerfile: docker/kafka/consumer.Dockerfile
+    container_name: weather-consumer
+    environment:
+      <<: *common-env
+    volumes:
+      - ./creds:/app/creds:ro
+      - ./data:/app/data
+    depends_on:
+      kafka:
+        condition: service_healthy
+      weather-producer:
+        condition: service_started
+    networks:
+      - weather-net
+
+  # Spark services
+  spark-master:
+    build:
+      context: .
+      dockerfile: docker/spark/master.Dockerfile
+    container_name: spark-master
+    environment:
+      <<: *common-env
+    ports:
+      - "8081:8080"
+      - "7077:7077"
+    networks:
+      - weather-net
+
+  spark-worker:
+    build:
+      context: .
+      dockerfile: docker/spark/worker.Dockerfile
+    container_name: spark-worker
+    environment:
+      <<: *common-env
+    depends_on:
+      - spark-master
+    networks:
+      - weather-net
+
+  # Spark streaming job
+  spark-streaming:
+    build:
+      context: .
+      dockerfile: docker/spark/streaming.Dockerfile
+    container_name: spark-streaming
+    environment:
+      <<: *common-env
+    volumes:
+      - ./spark/streaming:/app
+      - ./creds:/app/creds:ro
+    depends_on:
+      - spark-master
+      - kafka
+    networks:
+      - weather-net
+
+  # API service
+  api:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+    container_name: weather-api
+    environment:
+      <<: *common-env
+    volumes:
+      - ./creds:/app/creds:ro
+    ports:
+      - "8000:8000"
+    networks:
+      - weather-net
+
+networks:
+  weather-net:
+    driver: bridge
