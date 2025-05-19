@@ -11,9 +11,13 @@ if [ ! -f "creds/creds.json" ]; then
     exit 1
 fi
 
-# Start services
-echo "Starting services..."
+# Start main services
+echo "Starting main services..."
 docker-compose up --build -d
+
+# Start Airflow services
+echo "Starting Airflow services..."
+docker-compose -f docker-compose.airflow.yml up --build -d
 
 # Wait for services to be ready
 echo "Waiting for services to be ready..."
@@ -21,4 +25,5 @@ sleep 30
 
 # Show logs
 echo "Showing logs (Ctrl+C to exit log view, containers will continue running)"
+echo "To view Airflow logs, use: docker-compose -f docker-compose.airflow.yml logs -f"
 docker-compose logs -f

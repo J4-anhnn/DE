@@ -1,102 +1,87 @@
-"""
-DAG to process weather data using Spark batch job
-"""
 from airflow import DAG
 from airflow.providers.google.cloud.operators.dataproc import (
     DataprocCreateClusterOperator,
     DataprocSubmitJobOperator,
     DataprocDeleteClusterOperator
 )
-from airflow.providers.google.cloud.operators.bigquery import BigQueryCreateEmptyDatasetOperator
-from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
-import uuid
 
 default_args = {
-    'owner': 'airflow',
-    'depends_on_past': False,
-    'email_on_failure': False,
-    'email_on_retry': False,
-    'retries': 1,
-    'retry_delay': timedelta(minutes=5),
+    "owner": "airflow",
+    "depends_on_past": False,
+    "email_on_failure": False,
+    "email_on_retry": False,
+    "retries": 1,
+    "retry_delay": timedelta(minutes=5),
 }
 
-# Generate a unique cluster name
-def generate_cluster_name(**kwargs):
-    cluster_name = f"weather-processing-{uuid.uuid4().hex[:8]}"
-    kwargs['ti'].xcom_push(key='cluster_name', value=cluster_name)
-    return cluster_name
+# Cấu hình cluster - giảm kích thước để tiết kiệm chi phí
+CLUSTER_CONFIG = {
+    "master_config": {
+        "num_instances": 1,
+        "machine_type_uri": "n1-standard-2",
+        "disk_config": {"boot_disk_type": "pd-standard", "boot_disk_size_gb": 30}
+    },
+    "worker_config": {
+        "num_instances": 2,
+        "machine_type_uri": "n1-standard-2",
+        "disk_config": {"boot_disk_type": "pd-standard", "boot_disk_size_gb": 30}
+    },
+    "software_config": {
+        "image_version": "2.0-debian10"
+    },
+    "lifecycle_config": {
+        "idle_delete_ttl": {"seconds": 1800}  # Tự động xóa sau 30 phút không hoạt động
+    }
+}
+
+# Cấu hình Spark job
+PYSPARK_JOB = {
+    "reference": {"project_id": "spartan-cosmos-457603-e0"},
+    "placement": {"cluster_name": "weather-processing-cluster"},
+    "pyspark_job": {
+        "main_python_file_uri": "gs://weather-data-lake-2024/code/weather_batch_processing.py",
+        "args": [
+            "--input_path=gs://weather-data-lake-2024/raw/weather/",
+            "--output_table=spartan-cosmos-457603-e0.weather_data.weather_streaming",  # Sửa tên bảng
+            "--processing_date={{ ds }}"
+        ],
+        "jar_file_uris": ["gs://spark-lib/bigquery/spark-bigquery-latest_2.12.jar"]
+    }
+}
 
 with DAG(
-    'weather_processing',
+    "weather_processing",
     default_args=default_args,
-    description='Process weather data using Spark batch job',
-    schedule_interval='0 */6 * * *',  # Run every 6 hours
+    description="Process weather data using Spark batch job",
+    schedule_interval="0 */6 * * *",  # Every 6 hours
     start_date=datetime(2024, 1, 1),
     catchup=False,
 ) as dag:
 
-    # Create BigQuery dataset if it doesn't exist
-    create_dataset = BigQueryCreateEmptyDatasetOperator(
-        task_id='create_dataset',
-        dataset_id='weather_data',
-        location='US',
-        exists_ok=True,
-    )
-    
-    # Generate cluster name
-    gen_cluster_name = PythonOperator(
-        task_id='generate_cluster_name',
-        python_callable=generate_cluster_name,
-    )
-    
-    # Create Dataproc cluster
     create_cluster = DataprocCreateClusterOperator(
-        task_id='create_dataproc_cluster',
-        project_id='{{ var.value.gcp_project_id }}',
-        cluster_name='{{ ti.xcom_pull(task_ids="generate_cluster_name") }}',
-        region='{{ var.value.gcp_region }}',
-        cluster_config={
-            'master_config': {
-                'num_instances': 1,
-                'machine_type_uri': 'n1-standard-4',
-                'disk_config': {'boot_disk_size_gb': 100}
-            },
-            'worker_config': {
-                'num_instances': 2,
-                'machine_type_uri': 'n1-standard-4',
-                'disk_config': {'boot_disk_size_gb': 100}
-            }
-        },
+        task_id="create_dataproc_cluster",
+        project_id="spartan-cosmos-457603-e0",
+        cluster_name="weather-processing-cluster",
+        cluster_config=CLUSTER_CONFIG,
+        region="us-central1",
+        trigger_rule="all_done"
     )
-    
-    # Submit Spark job
+
     submit_job = DataprocSubmitJobOperator(
-        task_id='submit_spark_job',
-        project_id='{{ var.value.gcp_project_id }}',
-        region='{{ var.value.gcp_region }}',
-        job={
-            'reference': {'job_id': 'weather-processing-{{ ds_nodash }}'},
-            'placement': {'cluster_name': '{{ ti.xcom_pull(task_ids="generate_cluster_name") }}'},
-            'pyspark_job': {
-                'main_python_file_uri': 'gs://{{ var.value.code_bucket }}/spark/weather_batch_processing.py',
-                'args': [
-                    '--input_path=gs://{{ var.value.weather_raw_bucket }}/raw/weather/{{ ds_nodash }}/*',
-                    '--output_table={{ var.value.gcp_project_id }}.weather_data.weather_batch',
-                    '--processing_date={{ ds }}'
-                ]
-            }
-        },
+        task_id="submit_spark_job",
+        project_id="spartan-cosmos-457603-e0",
+        region="us-central1",
+        job=PYSPARK_JOB,
+        trigger_rule="all_done"
     )
-    
-    # Delete Dataproc cluster
+
     delete_cluster = DataprocDeleteClusterOperator(
-        task_id='delete_dataproc_cluster',
-        project_id='{{ var.value.gcp_project_id }}',
-        cluster_name='{{ ti.xcom_pull(task_ids="generate_cluster_name") }}',
-        region='{{ var.value.gcp_region }}',
-        trigger_rule='all_done',  # Run even if upstream tasks fail
+        task_id="delete_dataproc_cluster",
+        project_id="spartan-cosmos-457603-e0",
+        cluster_name="weather-processing-cluster",
+        region="us-central1",
+        trigger_rule="all_done"
     )
-    
-    # Define task dependencies
-    create_dataset >> gen_cluster_name >> create_cluster >> submit_job >> delete_cluster
+
+    create_cluster >> submit_job >> delete_cluster

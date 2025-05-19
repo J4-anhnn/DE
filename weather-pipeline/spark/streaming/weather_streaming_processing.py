@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-"""
-Python script to process weather data from Kafka and send to BigQuery
-This is a simplified version that uses kafka-python instead of Spark Structured Streaming
-"""
 import json
 import time
 import logging
