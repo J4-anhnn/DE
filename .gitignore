@@ -31,5 +31,11 @@ Data-Engineering/Day4/ex3/*.json
 *.mp3
 *.bin
 *.7z
+.env
 
 
+
+
+# Ignore all .env files
+.env
+.env.*
