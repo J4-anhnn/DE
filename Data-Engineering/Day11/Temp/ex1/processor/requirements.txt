@@ -1,0 +1,4 @@
+kafka-python==2.0.2
+google-cloud-bigquery==3.11.0
+python-dotenv==1.0.0
+matplotlib==3.7.1

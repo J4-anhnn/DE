@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: bitnami/zookeeper:latest
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: bitnami/kafka:latest
+    environment:
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+    ports:
+      - "9092:9092"
+    depends_on:
+      - zookeeper
+
+  kafka-producer:
+    build:
+      context: ./kafka_producer
+      dockerfile: Dockerfile.kafka-producer
+    depends_on:
+      - kafka
+
+  flink:
+    build:
+      context: .
+      dockerfile: Dockerfile.flink-python
+    volumes:
+      - ./flink_job:/opt/flink/job
+      - ./keys/gcp-creds.json:/opt/flink/gcp-creds.json
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/opt/flink/gcp-creds.json
+    depends_on:
+      - kafka
+

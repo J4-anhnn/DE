@@ -1,0 +1,14 @@
+services:
+  dbt:
+    platform: linux/amd64
+    build:
+      context: ..
+      dockerfile: ./docker/Dockerfile
+    environment:
+      DBT_PROFILE_DIR: /usr/app/profiles  # Cấu hình đúng thư mục chứa profiles.yml
+    volumes:
+      - ../:/usr/app                      # Mount toàn bộ thư mục của dự án vào container
+      - ./profiles:/usr/app/profiles      # Mount thư mục profiles vào container
+    working_dir: /usr/app                 # Đảm bảo đang ở đúng thư mục chứa dbt_project.yml
+    stdin_open: true
+    tty: true

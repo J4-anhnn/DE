@@ -1,0 +1,11 @@
+# profiles.yml
+your_profile_name:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: your_host
+      user: your_user
+      password: your_password
+      dbname: your_dbname
+      schema: your_schema
