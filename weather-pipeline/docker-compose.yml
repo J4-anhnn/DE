@@ -4,7 +4,20 @@ x-common-env: &common-env
   GOOGLE_APPLICATION_CREDENTIALS: /app/creds/creds.json
   OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY}
   GCP_PROJECT_ID: ${GCP_PROJECT_ID}
+  GCP_REGION: ${GCP_REGION:-asia-southeast1}
+  BIGQUERY_DATASET: ${BIGQUERY_DATASET:-weather_data}
   GCS_BUCKET: ${GCS_BUCKET}
+  PYTHONPATH: /app
+
+x-common-volumes: &common-volumes
+  - ./creds:/app/creds:ro
+  - ./config:/app/config
+  - ./data:/app/data
+  - ./kafka:/app/kafka
+  - ./extract:/app/extract
+  - ./load:/app/load
+  - ./spark:/app/spark
+  - ./api:/app/api
 
 services:
   # Kafka services
@@ -22,6 +35,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    volumes:
+      - zookeeper_data:/bitnami/zookeeper
 
   kafka:
     image: bitnami/kafka:3.4
@@ -34,7 +49,7 @@ services:
       KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_CFG_LISTENERS: PLAINTEXT://0.0.0.0:9092
       ALLOW_PLAINTEXT_LISTENER: "yes"
-      KAFKA_CREATE_TOPICS: "weather-raw:1:1,weather-processed:1:1"
+      KAFKA_CREATE_TOPICS: "weather-raw:1:1,weather-processed:1:1,weather-alerts:1:1"
     ports:
       - "9092:9092"
     networks:
@@ -44,35 +59,36 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    volumes:
+      - kafka_data:/bitnami/kafka
 
   # Kafka producer
   weather-producer:
     build:
       context: .
-      dockerfile: docker/kafka/Dockerfile
+      dockerfile: docker/kafka/Dockerfile.producer
     container_name: weather-producer
     environment:
       <<: *common-env
-    volumes:
-      - ./creds:/app/creds:ro
-      - ./data:/app/data
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    volumes: *common-volumes
     depends_on:
       kafka:
         condition: service_healthy
     networks:
       - weather-net
+    restart: unless-stopped
 
   # Kafka consumer
   weather-consumer:
     build:
       context: .
-      dockerfile: docker/kafka/consumer.Dockerfile
+      dockerfile: docker/kafka/Dockerfile.consumer
     container_name: weather-consumer
     environment:
       <<: *common-env
-    volumes:
-      - ./creds:/app/creds:ro
-      - ./data:/app/data
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    volumes: *common-volumes
     depends_on:
       kafka:
         condition: service_healthy
@@ -80,49 +96,80 @@ services:
         condition: service_started
     networks:
       - weather-net
+    restart: unless-stopped
+
+  # Weather alerts service
+  weather-alerts:
+    build:
+      context: .
+      dockerfile: docker/kafka/Dockerfile.alerts
+    container_name: weather-alerts
+    environment:
+      <<: *common-env
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    volumes: *common-volumes
+    depends_on:
+      kafka:
+        condition: service_healthy
+      weather-producer:
+        condition: service_started
+    networks:
+      - weather-net
+    restart: unless-stopped
 
   # Spark services
   spark-master:
     build:
       context: .
-      dockerfile: docker/spark/master.Dockerfile
+      dockerfile: docker/spark/Dockerfile.master
     container_name: spark-master
     environment:
       <<: *common-env
     ports:
       - "8081:8080"
       - "7077:7077"
+    volumes: *common-volumes
     networks:
       - weather-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
 
   spark-worker:
     build:
       context: .
-      dockerfile: docker/spark/worker.Dockerfile
+      dockerfile: docker/spark/Dockerfile.worker
     container_name: spark-worker
     environment:
       <<: *common-env
+      SPARK_MASTER: spark://spark-master:7077
+    volumes: *common-volumes
     depends_on:
-      - spark-master
+      spark-master:
+        condition: service_healthy
     networks:
       - weather-net
+    restart: unless-stopped
 
   # Spark streaming job
   spark-streaming:
     build:
       context: .
-      dockerfile: docker/spark/streaming.Dockerfile
+      dockerfile: docker/spark/Dockerfile.streaming
     container_name: spark-streaming
     environment:
       <<: *common-env
-    volumes:
-      - ./spark/streaming:/app
-      - ./creds:/app/creds:ro
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    volumes: *common-volumes
     depends_on:
       - spark-master
       - kafka
     networks:
       - weather-net
+    restart: unless-stopped
 
   # API service
   api:
@@ -132,13 +179,70 @@ services:
     container_name: weather-api
     environment:
       <<: *common-env
-    volumes:
-      - ./creds:/app/creds:ro
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      API_WORKERS: 4
+    volumes: *common-volumes
     ports:
       - "8000:8000"
     networks:
       - weather-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Extract service
+  extract:
+    build:
+      context: .
+      dockerfile: docker/extract/Dockerfile
+    container_name: weather-extract
+    environment:
+      <<: *common-env
+    volumes: *common-volumes
+    networks:
+      - weather-net
+    restart: unless-stopped
+
+  # Load service
+  load:
+    build:
+      context: .
+      dockerfile: docker/load/Dockerfile
+    container_name: weather-load
+    environment:
+      <<: *common-env
+    volumes: *common-volumes
+    networks:
+      - weather-net
+    restart: unless-stopped
+
+  # Dashboard service
+  dashboard:
+    build:
+      context: .
+      dockerfile: docker/dashboard/Dockerfile
+    container_name: weather-dashboard
+    environment:
+      <<: *common-env
+    volumes: *common-volumes
+    ports:
+      - "8501:8501"
+    networks:
+      - weather-net
+    depends_on:
+      - api
+    restart: unless-stopped
 
 networks:
   weather-net:
     driver: bridge
+
+volumes:
+  zookeeper_data:
+    name: weather-zookeeper-data
+  kafka_data:
+    name: weather-kafka-data

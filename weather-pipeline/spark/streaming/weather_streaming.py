@@ -1,45 +1,45 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
+from_pyspark.sql_import_SparkSession
+from_pyspark.sql.functions_import_from_json,_col
+from_pyspark.sql.types_import_StructType,_StructField,_StringType,_DoubleType,_TimestampType
 
-def create_spark_session():
-    return SparkSession.builder \
-        .appName("WeatherStreaming") \
-        .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1") \
-        .getOrCreate()
+def_create_spark_session():
+____return_SparkSession.builder_\
+________.appName("WeatherStreaming")_\
+________.config("spark.jars.packages",_"org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1")_\
+________.getOrCreate()
 
-def process_stream():
-    spark = create_spark_session()
-    
-    # Define schema for weather data
-    schema = StructType([
-        StructField("city_name", StringType()),
-        StructField("temperature", DoubleType()),
-        StructField("humidity", DoubleType()),
-        StructField("pressure", DoubleType()),
-        StructField("timestamp", TimestampType())
-    ])
+def_process_stream():
+____spark_=_create_spark_session()
+____
+____#_Define_schema_for_weather_data
+____schema_=_StructType([
+________StructField("city_name",_StringType()),
+________StructField("temperature",_DoubleType()),
+________StructField("humidity",_DoubleType()),
+________StructField("pressure",_DoubleType()),
+________StructField("timestamp",_TimestampType())
+____])
 
-    # Read from Kafka
-    df = spark.readStream \
-        .format("kafka") \
-        .option("kafka.bootstrap.servers", "kafka:9092") \
-        .option("subscribe", "weather-raw") \
-        .load()
+____#_Read_from_Kafka
+____df_=_spark.readStream_\
+________.format("kafka")_\
+________.option("kafka.bootstrap.servers",_"kafka:9092")_\
+________.option("subscribe",_"weather-raw")_\
+________.load()
 
-    # Parse JSON data
-    weather_df = df.select(from_json(col("value").cast("string"), schema).alias("data")) \
-        .select("data.*")
+____#_Parse_JSON_data
+____weather_df_=_df.select(from_json(col("value").cast("string"),_schema).alias("data"))_\
+________.select("data.*")
 
-    # Write to BigQuery
-    query = weather_df.writeStream \
-        .outputMode("append") \
-        .format("bigquery") \
-        .option("table", "weather_data.weather_streaming") \
-        .option("checkpointLocation", "/tmp/checkpoint") \
-        .start()
+____#_Write_to_BigQuery
+____query_=_weather_df.writeStream_\
+________.outputMode("append")_\
+________.format("bigquery")_\
+________.option("table",_"weather_data.weather_streaming")_\
+________.option("checkpointLocation",_"/tmp/checkpoint")_\
+________.start()
 
-    query.awaitTermination()
+____query.awaitTermination()
 
-if __name__ == "__main__":
-    process_stream()
+if___name___==_"__main__":
+____process_stream()

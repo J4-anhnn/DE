@@ -1,135 +1,170 @@
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from datetime import datetime, timedelta
+"""
+Airflow DAG for uploading files to Google Cloud Storage
+"""
 import os
 import sys
-import logging
-from google.cloud import storage
-import json
-import re
+from datetime import datetime, timedelta
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+from airflow.operators.bash import BashOperator
+from airflow.providers.google.cloud.transfers.local_to_gcs import LocalFilesystemToGCSOperator
+from airflow.utils.dates import days_ago
+from airflow.models import Variable
 
-# Cấu hình logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# Thêm đường dẫn gốc của dự án vào sys.path để import config
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+try:
+    from config.settings import (
+        GCP_PROJECT_ID, GCS_PROCESSED_BUCKET,
+        AIRFLOW_DAG_OWNER, AIRFLOW_RETRY_DELAY, AIRFLOW_RETRY_COUNT
+    )
+except ImportError:
+    # Fallback nếu không import được config
+    GCP_PROJECT_ID = os.environ.get('GCP_PROJECT_ID')
+    GCS_PROCESSED_BUCKET = os.environ.get('GCS_PROCESSED_BUCKET')
+    AIRFLOW_DAG_OWNER = 'airflow'
+    AIRFLOW_RETRY_DELAY = 300  # 5 phút
+    AIRFLOW_RETRY_COUNT = 3
 
-# Định nghĩa các hàm xử lý
-def initialize_gcs_client():
-    """Khởi tạo Google Cloud Storage client"""
-    try:
-        # Sử dụng service account credentials
-        client = storage.Client.from_service_account_json('/opt/airflow/creds/creds.json')
-        return client
-    except Exception as e:
-        logger.error(f"Error initializing GCS client: {str(e)}")
-        raise
-
-def create_bucket_if_not_exists(client, bucket_name):
-    """Tạo bucket nếu chưa tồn tại"""
-    try:
-        bucket = client.bucket(bucket_name)
-        if not bucket.exists():
-            bucket = client.create_bucket(bucket_name)
-            logger.info(f"Created new bucket: {bucket_name}")
-        return bucket
-    except Exception as e:
-        logger.error(f"Error creating/checking bucket: {str(e)}")
-        raise
-
-def upload_file_to_gcs(bucket, source_file, destination_blob_name):
-    """Upload một file lên GCS"""
-    try:
-        blob = bucket.blob(destination_blob_name)
-        blob.upload_from_filename(source_file)
-        logger.info(f"Uploaded {source_file} to gs://{bucket.name}/{destination_blob_name}")
-    except Exception as e:
-        logger.error(f"Error uploading file {source_file}: {str(e)}")
-        raise
-
-def process_and_upload_files(local_dir="/opt/airflow/data", bucket_name="weather-data-lake-2024", **context):
-    """Xử lý và upload tất cả file từ thư mục local"""
-    try:
-        # Khởi tạo GCS client
-        client = initialize_gcs_client()
-        
-        # Tạo/lấy bucket
-        bucket = create_bucket_if_not_exists(client, bucket_name)
-        
-        # Đếm số file đã xử lý
-        processed_files = 0
-        total_files = sum(len(files) for _, _, files in os.walk(local_dir))
-        
-        # Duyệt qua tất cả file trong thư mục
-        for root, _, files in os.walk(local_dir):
-            for file in files:
-                if file.endswith('.json'):
-                    try:
-                        local_file_path = os.path.join(root, file)
-                        
-                        # Đọc file để lấy thông tin thời gian
-                        with open(local_file_path, 'r') as f:
-                            data = json.load(f)
-                        
-                        # Sử dụng regex để tìm mẫu ngày tháng trong tên file
-                        match = re.search(r'(\d{8}-\d{6})', file)
-                        if match:
-                            date_str = match.group(1)
-                            file_date = datetime.strptime(date_str, '%Y%m%d-%H%M%S')
-                            
-                            # Lấy tên thành phố từ phần đầu của tên file
-                            city_name = file.split('_' + date_str)[0]
-                            
-                            # Tạo đường dẫn trên GCS theo cấu trúc: raw/weather/YYYY/MM/DD/city/
-                            gcs_path = f"raw/weather/{file_date.strftime('%Y/%m/%d')}/{city_name}/{file}"
-                            
-                            # Upload file
-                            upload_file_to_gcs(bucket, local_file_path, gcs_path)
-                            
-                            processed_files += 1
-                            if processed_files % 100 == 0:
-                                logger.info(f"Progress: {processed_files}/{total_files} files processed")
-                        else:
-                            logger.warning(f"Could not find date pattern in filename: {file}")
-                            
-                    except Exception as e:
-                        logger.error(f"Error processing file {file}: {str(e)}")
-                        continue
-        
-        logger.info(f"Completed! Total files processed: {processed_files}")
-        return f"Processed {processed_files} files"
-        
-    except Exception as e:
-        logger.error(f"Error in main process: {str(e)}")
-        raise
-
-# Định nghĩa DAG
+# Định nghĩa các tham số mặc định cho DAG
 default_args = {
-    'owner': 'airflow',
+    'owner': AIRFLOW_DAG_OWNER,
     'depends_on_past': False,
-    'email_on_failure': False,
+    'email_on_failure': True,
     'email_on_retry': False,
-    'retries': 3,
-    'retry_delay': timedelta(minutes=5),
+    'retries': AIRFLOW_RETRY_COUNT,
+    'retry_delay': timedelta(seconds=AIRFLOW_RETRY_DELAY),
 }
 
-with DAG(
-    'upload_weather_data_to_gcs',
+# Tạo DAG
+dag = DAG(
+    'gcs_upload',
     default_args=default_args,
-    description='Upload weather data from local to GCS',
-    schedule_interval='0 */1 * * *',  # Chạy mỗi 1 giờ
-    start_date=datetime(2024, 1, 1),
+    description='Upload files to Google Cloud Storage',
+    schedule_interval=None,  # Chạy thủ công
+    start_date=days_ago(1),
+    tags=['gcs', 'upload'],
     catchup=False,
-    tags=['weather', 'gcs', 'data-lake'],
-) as dag:
+)
 
-    upload_task = PythonOperator(
-        task_id='upload_weather_data',
-        python_callable=process_and_upload_files,
-        op_kwargs={
-            'local_dir': '/opt/airflow/data',
-            'bucket_name': 'weather-data-lake-2024'
-        },
-        provide_context=True,
-    )
+def prepare_files(**context):
+    """
+    Chuẩn bị danh sách file cần upload
+    
+    Args:
+        context: Airflow context
+        
+    Returns:
+        Dict chứa danh sách file và thư mục đích
+    """
+    # Lấy tham số từ context
+    params = context['params']
+    source_dir = params.get('source_dir', '/tmp/upload')
+    destination_prefix = params.get('destination_prefix', 'uploads')
+    
+    # Kiểm tra thư mục nguồn
+    if not os.path.exists(source_dir):
+        raise FileNotFoundError(f"Source directory not found: {source_dir}")
+    
+    # Lấy danh sách file trong thư mục
+    files = []
+    for root, _, filenames in os.walk(source_dir):
+        for filename in filenames:
+            source_path = os.path.join(root, filename)
+            relative_path = os.path.relpath(source_path, source_dir)
+            destination_path = f"{destination_prefix}/{relative_path}"
+            files.append({
+                'source_path': source_path,
+                'destination_path': destination_path
+            })
+    
+    # Lưu danh sách file vào XCom
+    context['ti'].xcom_push(key='files', value=files)
+    context['ti'].xcom_push(key='file_count', value=len(files))
+    
+    return {
+        'files': files,
+        'file_count': len(files)
+    }
+
+# Task chuẩn bị file
+prepare_files_task = PythonOperator(
+    task_id='prepare_files',
+    python_callable=prepare_files,
+    provide_context=True,
+    dag=dag,
+)
+
+def upload_file(source_path, destination_path, bucket_name, **context):
+    """
+    Upload một file lên GCS
+    
+    Args:
+        source_path: Đường dẫn đến file nguồn
+        destination_path: Đường dẫn đích trên GCS
+        bucket_name: Tên bucket GCS
+        context: Airflow context
+    """
+    from google.cloud import storage
+    
+    # Khởi tạo client
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    
+    # Upload file
+    blob = bucket.blob(destination_path)
+    blob.upload_from_filename(source_path)
+    
+    return f"gs://{bucket_name}/{destination_path}"
+
+def upload_files(**context):
+    """
+    Upload nhiều file lên GCS
+    
+    Args:
+        context: Airflow context
+    """
+    # Lấy danh sách file từ XCom
+    ti = context['ti']
+    files = ti.xcom_pull(key='files', task_ids='prepare_files')
+    
+    if not files:
+        raise ValueError("No files to upload")
+    
+    # Upload từng file
+    uploaded_paths = []
+    for file_info in files:
+        source_path = file_info['source_path']
+        destination_path = file_info['destination_path']
+        
+        gcs_path = upload_file(
+            source_path=source_path,
+            destination_path=destination_path,
+            bucket_name=GCS_PROCESSED_BUCKET,
+            **context
+        )
+        
+        uploaded_paths.append(gcs_path)
+    
+    # Lưu đường dẫn đã upload vào XCom
+    ti.xcom_push(key='uploaded_paths', value=uploaded_paths)
+    
+    return uploaded_paths
+
+# Task upload file
+upload_files_task = PythonOperator(
+    task_id='upload_files',
+    python_callable=upload_files,
+    provide_context=True,
+    dag=dag,
+)
+
+# Task thông báo hoàn thành
+notify_task = BashOperator(
+    task_id='notify_completion',
+    bash_command='echo "Uploaded {{ ti.xcom_pull(key="file_count", task_ids="prepare_files") }} files to GCS at $(date)"',
+    dag=dag,
+)
+
+# Định nghĩa thứ tự thực hiện các task
+prepare_files_task >> upload_files_task >> notify_task

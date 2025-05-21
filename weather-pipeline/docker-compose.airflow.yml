@@ -1,80 +1,79 @@
 version: '3.8'
 
 x-airflow-common: &airflow-common
-  build:
-    context: .
-    dockerfile: docker/airflow/Dockerfile
+  image: apache/airflow:2.6.0
   environment:
-    - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-    - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
-    - AIRFLOW__CORE__FERNET_KEY=''
-    - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true
-    - AIRFLOW__CORE__LOAD_EXAMPLES=false
-    - AIRFLOW__API__AUTH_BACKEND=airflow.api.auth.backend.basic_auth
-    - GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/creds/creds.json
-    - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY}
-    - GCP_PROJECT_ID=${GCP_PROJECT_ID}
-    - GCS_BUCKET=${GCS_BUCKET}
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__API__AUTH_BACKEND: 'airflow.api.auth.backend.basic_auth'
+    AIRFLOW__SCHEDULER__CATCHUP_BY_DEFAULT: 'false'
+    GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/creds/creds.json
+    OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY}
+    GCP_PROJECT_ID: ${GCP_PROJECT_ID}
+    GCP_REGION: ${GCP_REGION:-asia-southeast1}
+    BIGQUERY_DATASET: ${BIGQUERY_DATASET:-weather_data}
+    GCS_RAW_BUCKET: ${GCS_RAW_BUCKET}
+    GCS_PROCESSED_BUCKET: ${GCS_PROCESSED_BUCKET}
+    GCS_TEMP_BUCKET: ${GCS_TEMP_BUCKET}
+    PYTHONPATH: /opt/airflow
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./airflow/logs:/opt/airflow/logs
     - ./airflow/plugins:/opt/airflow/plugins
-    - ./data:/opt/airflow/data
+    - ./extract:/opt/airflow/extract
+    - ./transform:/opt/airflow/transform
+    - ./load:/opt/airflow/load
+    - ./config:/opt/airflow/config
     - ./creds:/opt/airflow/creds:ro
-  networks:
-    - weather-net
+  user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
-    - postgres
+    postgres:
+      condition: service_healthy
 
 services:
   postgres:
     image: postgres:13
-    container_name: airflow-postgres
     environment:
-      - POSTGRES_USER=airflow
-      - POSTGRES_PASSWORD=airflow
-      - POSTGRES_DB=airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
-    networks:
-      - weather-net
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 5s
       retries: 5
+    restart: always
 
   airflow-webserver:
     <<: *airflow-common
-    container_name: airflow-webserver
     command: webserver
     ports:
-      - 8080:8080
+      - "8080:8080"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 10s
       timeout: 10s
       retries: 5
+    restart: always
 
   airflow-scheduler:
     <<: *airflow-common
-    container_name: airflow-scheduler
     command: scheduler
-    healthcheck:
-      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
-      interval: 10s
-      timeout: 10s
-      retries: 5
+    restart: always
 
   airflow-init:
     <<: *airflow-common
-    container_name: airflow-init
-    entrypoint: /bin/bash
-    command: -c "airflow db init && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com"
-    restart: on-failure
+    command: version
+    environment:
+      <<: *airflow-common
+      _AIRFLOW_DB_UPGRADE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_WWW_USER_USERNAME:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_WWW_USER_PASSWORD:-airflow}
 
 volumes:
   postgres-db-volume:
-
-networks:
-  weather-net:
-    external: true

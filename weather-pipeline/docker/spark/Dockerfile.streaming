@@ -1,0 +1,18 @@
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements-spark.txt .
+RUN pip install --no-cache-dir -r requirements-spark.txt
+
+# Copy source code
+COPY spark/streaming/ ./spark/streaming/
+COPY config/ ./config/
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Run the streaming processor
+CMD ["python", "-m", "spark.streaming.weather_streaming_processing"]

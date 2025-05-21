@@ -1,192 +1,144 @@
-#!/usr/bin/env python3
+"""
+Module để thu thập và lưu trữ dữ liệu thời tiết
+"""
 import os
-import time
 import json
-import logging
+import time
 from datetime import datetime
-import requests
-from google.cloud import bigquery
+from typing import Dict, Any, List, Optional
+import sys
 from google.cloud import storage
+import tempfile
 
-# Cấu hình logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# Thêm đường dẫn gốc của dự án vào sys.path để import config
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from config.settings import CITIES, GCS_RAW_BUCKET, setup_logging
+from extract.weather_api import WeatherAPI
 
-# Danh sách các thành phố
-CITIES = [
-    "Hanoi", 
-    "Ho Chi Minh City", 
-    "Da Nang", 
-    "Hue", 
-    "Can Tho",
-    "Hai Phong",
-    "Nha Trang",
-    "Vinh",
-    "Quy Nhon",
-    "Buon Ma Thuot"
-]
+logger = setup_logging(__name__)
 
 class WeatherCollector:
-    def __init__(self):
-        self.api_key = os.getenv('OPENWEATHER_API_KEY')
-        if not self.api_key:
-            raise ValueError("OPENWEATHER_API_KEY environment variable is required")
-        
-        logger.info(f"Using API key: {self.api_key[:5]}...")
-        
-        # Khởi tạo BigQuery client
-        try:
-            self.bq_client = bigquery.Client()
-            self.dataset_id = "weather_data"
-            self.table_id = "weather_raw"
-            
-            # Đảm bảo dataset và table tồn tại
-            self.setup_bigquery()
-        except Exception as e:
-            logger.error(f"Error initializing BigQuery client: {str(e)}")
-            # Vẫn tiếp tục chạy, lưu dữ liệu vào file
+    """Lớp để thu thập và lưu trữ dữ liệu thời tiết"""
     
-    def setup_bigquery(self):
-        """Tạo dataset và table nếu chưa tồn tại"""
-        dataset_ref = self.bq_client.dataset(self.dataset_id)
+    def __init__(self, api_key: Optional[str] = None, cities: Optional[List[str]] = None, 
+                 gcs_bucket: Optional[str] = None):
+        """
+        Khởi tạo WeatherCollector
         
+        Args:
+            api_key: API key cho OpenWeather API
+            cities: Danh sách thành phố cần thu thập dữ liệu
+            gcs_bucket: Tên bucket GCS để lưu trữ dữ liệu
+        """
+        self.api = WeatherAPI(api_key)
+        self.cities = cities or CITIES
+        self.gcs_bucket = gcs_bucket or GCS_RAW_BUCKET
+        self.storage_client = storage.Client()
+        
+        # Đảm bảo bucket tồn tại
         try:
-            self.bq_client.get_dataset(dataset_ref)
-            logger.info(f"Dataset {self.dataset_id} already exists")
-        except Exception:
-            # Create dataset
-            dataset = bigquery.Dataset(dataset_ref)
-            dataset.location = "US"
-            dataset = self.bq_client.create_dataset(dataset)
-            logger.info(f"Created dataset {self.dataset_id}")
+            self.bucket = self.storage_client.get_bucket(self.gcs_bucket)
+            logger.info(f"Using existing GCS bucket: {self.gcs_bucket}")
+        except Exception as e:
+            logger.warning(f"Error accessing bucket {self.gcs_bucket}: {str(e)}")
+            logger.info(f"Creating new bucket: {self.gcs_bucket}")
+            self.bucket = self.storage_client.create_bucket(self.gcs_bucket)
         
-        # Định nghĩa schema cho table
-        schema = [
-            bigquery.SchemaField("city_name", "STRING", mode="REQUIRED"),
-            bigquery.SchemaField("temperature", "FLOAT"),
-            bigquery.SchemaField("feels_like", "FLOAT"),
-            bigquery.SchemaField("humidity", "FLOAT"),
-            bigquery.SchemaField("pressure", "FLOAT"),
-            bigquery.SchemaField("wind_speed", "FLOAT"),
-            bigquery.SchemaField("wind_direction", "FLOAT"),
-            bigquery.SchemaField("cloudiness", "FLOAT"),
-            bigquery.SchemaField("weather_condition", "STRING"),
-            bigquery.SchemaField("weather_description", "STRING"),
-            bigquery.SchemaField("measurement_time", "TIMESTAMP", mode="REQUIRED"),
-            bigquery.SchemaField("processing_time", "TIMESTAMP", mode="REQUIRED"),
-            bigquery.SchemaField("processing_date", "DATE", mode="REQUIRED")
-        ]
+        logger.info(f"WeatherCollector initialized for cities: {', '.join(self.cities)}")
+    
+    def collect_and_save(self, local_dir: Optional[str] = None) -> Dict[str, str]:
+        """
+        Thu thập dữ liệu thời tiết và lưu vào GCS
         
-        table_ref = dataset_ref.table(self.table_id)
-        try:
-            self.bq_client.get_table(table_ref)
-            logger.info(f"Table {self.table_id} already exists")
-        except Exception:
-            # Create table
-            table = bigquery.Table(table_ref, schema=schema)
-            table.time_partitioning = bigquery.TimePartitioning(
-                type_=bigquery.TimePartitioningType.DAY,
-                field="processing_date"
+        Args:
+            local_dir: Thư mục để lưu bản sao cục bộ (nếu cần)
+            
+        Returns:
+            Dict với key là tên thành phố và value là đường dẫn GCS
+        """
+        # Thu thập dữ liệu
+        weather_data = self.api.get_weather_for_cities(self.cities)
+        
+        # Tạo timestamp để đặt tên file
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        
+        # Lưu trữ dữ liệu
+        gcs_paths = {}
+        for city, data in weather_data.items():
+            # Tạo tên file
+            city_slug = city.lower().replace(' ', '_')
+            filename = f"{city_slug}_{timestamp}.json"
+            
+            # Lưu vào GCS
+            blob = self.bucket.blob(f"raw/{filename}")
+            blob.upload_from_string(
+                json.dumps(data, indent=2),
+                content_type='application/json'
             )
-            table.clustering_fields = ["city_name", "weather_condition"]
+            gcs_path = f"gs://{self.gcs_bucket}/raw/{filename}"
+            gcs_paths[city] = gcs_path
+            logger.info(f"Uploaded weather data for {city} to {gcs_path}")
             
-            table = self.bq_client.create_table(table)
-            logger.info(f"Created table {self.table_id}")
-    
-    def get_weather_data(self, city):
-        """Lấy dữ liệu thời tiết từ OpenWeather API"""
-        url = f"http://api.openweathermap.org/data/2.5/weather"
-        params = {
-            "q": city,
-            "appid": self.api_key,
-            "units": "metric"
-        }
+            # Lưu bản sao cục bộ nếu cần
+            if local_dir:
+                os.makedirs(local_dir, exist_ok=True)
+                local_path = os.path.join(local_dir, filename)
+                with open(local_path, 'w') as f:
+                    json.dump(data, f, indent=2)
+                logger.info(f"Saved local copy to {local_path}")
         
-        try:
-            response = requests.get(url, params=params)
-            response.raise_for_status()
-            data = response.json()
-            
-            # Transform data
-            now = datetime.utcnow()
-            transformed_data = {
-                "city_name": city,
-                "temperature": data.get("main", {}).get("temp"),
-                "feels_like": data.get("main", {}).get("feels_like"),
-                "humidity": data.get("main", {}).get("humidity"),
-                "pressure": data.get("main", {}).get("pressure"),
-                "wind_speed": data.get("wind", {}).get("speed"),
-                "wind_direction": data.get("wind", {}).get("deg"),
-                "cloudiness": data.get("clouds", {}).get("all"),
-                "weather_condition": data.get("weather", [{}])[0].get("main"),
-                "weather_description": data.get("weather", [{}])[0].get("description"),
-                "measurement_time": datetime.fromtimestamp(data.get("dt", time.time())).isoformat(),
-                "processing_time": now.isoformat(),
-                "processing_date": now.date().isoformat()
-            }
-            
-            return transformed_data
-            
-        except Exception as e:
-            logger.error(f"Error fetching weather for {city}: {str(e)}")
-            return None
+        return gcs_paths
     
-    def save_to_file(self, data, city):
-        """Lưu dữ liệu vào file"""
-        os.makedirs("data", exist_ok=True)
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        filename = f"data/{city.lower().replace(' ', '_')}_{timestamp}.json"
+    def collect_to_temp_and_upload(self) -> Dict[str, str]:
+        """
+        Thu thập dữ liệu thời tiết vào thư mục tạm và tải lên GCS
         
-        with open(filename, 'w') as f:
-            json.dump(data, f, indent=2)
+        Returns:
+            Dict với key là tên thành phố và value là đường dẫn GCS
+        """
+        # Thu thập dữ liệu
+        weather_data = self.api.get_weather_for_cities(self.cities)
         
-        logger.info(f"Saved data to {filename}")
-    
-    def collect_and_store(self):
-        """Thu thập và lưu dữ liệu thời tiết"""
-        while True:
-            rows_to_insert = []
-            
-            for city in CITIES:
-                try:
-                    data = self.get_weather_data(city)
-                    if data:
-                        rows_to_insert.append(data)
-                        logger.info(f"Collected data for {city}: {data['temperature']}°C, {data['weather_condition']}")
-                        
-                        # Lưu vào file
-                        self.save_to_file(data, city)
-                except Exception as e:
-                    logger.error(f"Error processing {city}: {str(e)}")
-            
-            if rows_to_insert and hasattr(self, 'bq_client'):
-                try:
-                    # Insert vào BigQuery
-                    table_ref = f"{self.bq_client.project}.{self.dataset_id}.{self.table_id}"
-                    errors = self.bq_client.insert_rows_json(table_ref, rows_to_insert)
-                    
-                    if errors == []:
-                        logger.info(f"Successfully inserted {len(rows_to_insert)} rows into BigQuery")
-                    else:
-                        logger.error(f"Errors inserting rows into BigQuery: {errors}")
-                except Exception as e:
-                    logger.error(f"Error inserting to BigQuery: {str(e)}")
-            
-            # Đợi 5 phút trước khi thu thập dữ liệu tiếp
-            logger.info("Waiting 5sec before next collection...")
-            time.sleep(5)
+        # Tạo timestamp để đặt tên file
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        
+        # Lưu trữ dữ liệu
+        gcs_paths = {}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for city, data in weather_data.items():
+                # Tạo tên file
+                city_slug = city.lower().replace(' ', '_')
+                filename = f"{city_slug}_{timestamp}.json"
+                temp_path = os.path.join(temp_dir, filename)
+                
+                # Lưu vào file tạm
+                with open(temp_path, 'w') as f:
+                    json.dump(data, f, indent=2)
+                
+                # Tải lên GCS
+                blob = self.bucket.blob(f"raw/{filename}")
+                blob.upload_from_filename(temp_path)
+                
+                gcs_path = f"gs://{self.gcs_bucket}/raw/{filename}"
+                gcs_paths[city] = gcs_path
+                logger.info(f"Uploaded weather data for {city} to {gcs_path}")
+        
+        return gcs_paths
 
 def main():
-    try:
-        logger.info("Weather collector starting...")
-        collector = WeatherCollector()
-        collector.collect_and_store()
-    except Exception as e:
-        logger.error(f"Fatal error: {str(e)}")
-        raise
+    """Hàm chính để chạy module độc lập"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Collect weather data and save to GCS')
+    parser.add_argument('--local-dir', help='Directory to save local copies')
+    args = parser.parse_args()
+    
+    collector = WeatherCollector()
+    gcs_paths = collector.collect_and_save(args.local_dir)
+    
+    print("\nWeather data collected and saved to GCS:")
+    for city, path in gcs_paths.items():
+        print(f"{city}: {path}")
 
 if __name__ == "__main__":
     main()

@@ -1,3 +1,4 @@
-google-cloud-bigquery==3.11.4
-google-cloud-storage==2.10.0
-python-dotenv==1.0.0
+google-cloud-bigquery==3.9.0
+google-cloud-storage==2.9.0
+pandas==1.5.3
+numpy==1.24.3

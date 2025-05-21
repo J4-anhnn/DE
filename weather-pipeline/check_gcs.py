@@ -1,33 +1,49 @@
-#!/usr/bin/env python3
-from google.cloud import storage
-import sys
-import os
+#!/usr/bin/env_python3
+"""
+Script_to_check_GCS_connection_and_list_buckets
+"""
+import_os
+import_sys
+from_google.cloud_import_storage
+from_google.cloud.exceptions_import_GoogleCloudError
 
-def list_blobs(bucket_name, prefix=None):
-    """Lists all the blobs in the bucket."""
-    # Sử dụng credentials từ file creds.json
-    creds_path = 'creds.json'
-    if not os.path.exists(creds_path):
-        creds_path = 'creds/creds.json'
-    
-    storage_client = storage.Client.from_service_account_json(creds_path)
-    
-    # Note: Client.list_blobs requires at least project and bucket.
-    blobs = storage_client.list_blobs(bucket_name, prefix=prefix)
+def_check_gcs_connection():
+____"""Check_GCS_connection_and_list_buckets"""
+____try:
+________#_Initialize_the_client
+________client_=_storage.Client()
+________
+________#_List_buckets
+________buckets_=_list(client.list_buckets())
+________
+________print(f"Successfully_connected_to_GCS._Found_{len(buckets)}_buckets:")
+________for_bucket_in_buckets:
+____________print(f"-_{bucket.name}")
+________
+________#_Check_for_project_buckets
+________project_id_=_os.environ.get('GCP_PROJECT_ID')
+________if_project_id:
+____________raw_bucket_name_=_f"{project_id}-weather-raw"
+____________processed_bucket_name_=_f"{project_id}-weather-processed"
+____________
+____________raw_bucket_exists_=_any(bucket.name_==_raw_bucket_name_for_bucket_in_buckets)
+____________processed_bucket_exists_=_any(bucket.name_==_processed_bucket_name_for_bucket_in_buckets)
+____________
+____________print("\nProject_buckets:")
+____________print(f"-_{raw_bucket_name}:_{'✅_Exists'_if_raw_bucket_exists_else_'❌_Not_found'}")
+____________print(f"-_{processed_bucket_name}:_{'✅_Exists'_if_processed_bucket_exists_else_'❌_Not_found'}")
+____________
+____________if_not_raw_bucket_exists_or_not_processed_bucket_exists:
+________________print("\nMissing_buckets._Run_'./run.sh_terraform'_to_create_them.")
+________
+________return_True
+____except_GoogleCloudError_as_e:
+________print(f"Error_connecting_to_GCS:_{e}")
+________return_False
+____except_Exception_as_e:
+________print(f"Unexpected_error:_{e}")
+________return_False
 
-    print(f"Files in bucket {bucket_name}:")
-    count = 0
-    for blob in blobs:
-        print(f"- {blob.name}")
-        count += 1
-    
-    print(f"\nTotal: {count} files")
-
-if __name__ == "__main__":
-    bucket_name = "weather-data-lake-2024"
-    prefix = None
-    
-    if len(sys.argv) > 1:
-        prefix = sys.argv[1]
-    
-    list_blobs(bucket_name, prefix)
+if___name___==_"__main__":
+____success_=_check_gcs_connection()
+____sys.exit(0_if_success_else_1)

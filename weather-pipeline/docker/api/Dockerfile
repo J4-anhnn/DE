@@ -2,15 +2,19 @@ FROM python:3.9-slim
 
 WORKDIR /app
 
-# Cài đặt các gói phụ thuộc
-COPY requirements-api.txt /tmp/
-RUN pip install --no-cache-dir -r /tmp/requirements-api.txt
+# Install dependencies
+COPY api/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source code
-COPY api/ /app/
+COPY . .
 
-# Thiết lập biến môi trường
+# Set environment variables
 ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
 
-# Chạy API
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Expose port
+EXPOSE 8000
+
+# Run the API server
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

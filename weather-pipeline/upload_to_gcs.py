@@ -1,105 +1,102 @@
 #!/usr/bin/env python3
-from google.cloud import storage
+"""
+Script to upload files to GCS
+"""
 import os
-from datetime import datetime
-import json
-import logging
-import re
+import sys
+import argparse
+from pathlib import Path
+from google.cloud import storage
 
-# Cấu hình logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-def initialize_gcs_client():
-    """Khởi tạo Google Cloud Storage client"""
+def upload_file(bucket_name, source_file_path, destination_blob_name=None):
+    """Upload a file to GCS bucket"""
+    # If destination blob name is not specified, use the source file name
+    if destination_blob_name is None:
+        destination_blob_name = os.path.basename(source_file_path)
+    
+    # Initialize the client
+    client = storage.Client()
+    
     try:
-        # Sử dụng service account credentials
-        client = storage.Client.from_service_account_json('creds.json')
-        return client
-    except Exception as e:
-        logger.error(f"Error initializing GCS client: {str(e)}")
-        raise
-
-def create_bucket_if_not_exists(client, bucket_name):
-    """Tạo bucket nếu chưa tồn tại"""
-    try:
+        # Get the bucket
         bucket = client.bucket(bucket_name)
-        if not bucket.exists():
-            bucket = client.create_bucket(bucket_name)
-            logger.info(f"Created new bucket: {bucket_name}")
-        return bucket
-    except Exception as e:
-        logger.error(f"Error creating/checking bucket: {str(e)}")
-        raise
-
-def upload_file_to_gcs(bucket, source_file, destination_blob_name):
-    """Upload một file lên GCS"""
-    try:
+        
+        # Create a blob and upload the file
         blob = bucket.blob(destination_blob_name)
-        blob.upload_from_filename(source_file)
-        logger.info(f"Uploaded {source_file} to gs://{bucket.name}/{destination_blob_name}")
+        blob.upload_from_filename(source_file_path)
+        
+        print(f"File {source_file_path} uploaded to gs://{bucket_name}/{destination_blob_name}")
+        return True
     except Exception as e:
-        logger.error(f"Error uploading file {source_file}: {str(e)}")
-        raise
+        print(f"Error uploading file: {e}")
+        return False
 
-def process_and_upload_files(local_dir="data", bucket_name="weather-data-lake-2024"):
-    """Xử lý và upload tất cả file từ thư mục local"""
+def upload_directory(bucket_name, source_dir, destination_prefix=None):
+    """Upload all files in a directory to GCS bucket"""
+    # Initialize the client
+    client = storage.Client()
+    
     try:
-        # Khởi tạo GCS client
-        client = initialize_gcs_client()
+        # Get the bucket
+        bucket = client.bucket(bucket_name)
         
-        # Tạo/lấy bucket
-        bucket = create_bucket_if_not_exists(client, bucket_name)
+        # Walk through the directory
+        success_count = 0
+        error_count = 0
         
-        # Đếm số file đã xử lý
-        processed_files = 0
-        total_files = sum(len(files) for _, _, files in os.walk(local_dir))
-        
-        # Duyệt qua tất cả file trong thư mục
-        for root, _, files in os.walk(local_dir):
+        for root, _, files in os.walk(source_dir):
             for file in files:
-                if file.endswith('.json'):
-                    try:
-                        local_file_path = os.path.join(root, file)
-                        
-                        # Đọc file để lấy thông tin thời gian
-                        with open(local_file_path, 'r') as f:
-                            data = json.load(f)
-                        
-                        # Sử dụng regex để tìm mẫu ngày tháng trong tên file
-                        match = re.search(r'(\d{8}-\d{6})', file)
-                        if match:
-                            date_str = match.group(1)
-                            file_date = datetime.strptime(date_str, '%Y%m%d-%H%M%S')
-                            
-                            # Lấy tên thành phố từ phần đầu của tên file
-                            city_name = file.split('_' + date_str)[0]
-                            
-                            # Tạo đường dẫn trên GCS theo cấu trúc: raw/weather/YYYY/MM/DD/city/
-                            gcs_path = f"raw/weather/{file_date.strftime('%Y/%m/%d')}/{city_name}/{file}"
-                            
-                            # Upload file
-                            upload_file_to_gcs(bucket, local_file_path, gcs_path)
-                            
-                            processed_files += 1
-                            if processed_files % 100 == 0:
-                                logger.info(f"Progress: {processed_files}/{total_files} files processed")
-                        else:
-                            logger.warning(f"Could not find date pattern in filename: {file}")
-                            
-                    except Exception as e:
-                        logger.error(f"Error processing file {file}: {str(e)}")
-                        continue
+                source_file_path = os.path.join(root, file)
+                
+                # Calculate relative path
+                rel_path = os.path.relpath(source_file_path, source_dir)
+                
+                # Determine destination blob name
+                if destination_prefix:
+                    destination_blob_name = f"{destination_prefix}/{rel_path}"
+                else:
+                    destination_blob_name = rel_path
+                
+                # Upload the file
+                try:
+                    blob = bucket.blob(destination_blob_name)
+                    blob.upload_from_filename(source_file_path)
+                    print(f"Uploaded {source_file_path} to gs://{bucket_name}/{destination_blob_name}")
+                    success_count += 1
+                except Exception as e:
+                    print(f"Error uploading {source_file_path}: {e}")
+                    error_count += 1
         
-        logger.info(f"Completed! Total files processed: {processed_files}")
+        print(f"\nUpload summary:")
+        print(f"- Successfully uploaded: {success_count} files")
+        print(f"- Failed to upload: {error_count} files")
         
+        return error_count == 0
     except Exception as e:
-        logger.error(f"Error in main process: {str(e)}")
-        raise
+        print(f"Error uploading directory: {e}")
+        return False
+
+def main():
+    """Main entry point"""
+    parser = argparse.ArgumentParser(description='Upload files to GCS')
+    parser.add_argument('--bucket', required=True, help='GCS bucket name')
+    parser.add_argument('--source', required=True, help='Source file or directory')
+    parser.add_argument('--destination', help='Destination blob name or prefix')
+    
+    args = parser.parse_args()
+    
+    source_path = Path(args.source)
+    
+    if not source_path.exists():
+        print(f"Error: Source path {args.source} does not exist")
+        return 1
+    
+    if source_path.is_file():
+        success = upload_file(args.bucket, str(source_path), args.destination)
+    else:
+        success = upload_directory(args.bucket, str(source_path), args.destination)
+    
+    return 0 if success else 1
 
 if __name__ == "__main__":
-    logger.info("Starting upload process...")
-    process_and_upload_files()
+    sys.exit(main())

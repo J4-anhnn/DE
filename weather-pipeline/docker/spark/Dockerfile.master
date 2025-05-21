@@ -1,0 +1,20 @@
+FROM bitnami/spark:3.3.0
+
+USER root
+
+# Install Python dependencies
+COPY requirements-spark.txt .
+RUN pip install --no-cache-dir -r requirements-spark.txt
+
+# Copy source code
+COPY spark/ /app/spark/
+COPY config/ /app/config/
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Switch back to non-root user
+USER 1001
+
+# The entrypoint and command are inherited from the base image

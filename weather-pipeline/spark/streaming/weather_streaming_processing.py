@@ -1,40 +1,93 @@
+#!/usr/bin/env python3
+"""
+Spark Streaming job to process weather data from Kafka and load into BigQuery
+"""
+import os
+import sys
 import json
 import time
 import logging
-import os
+from datetime import datetime, timedelta
 from kafka import KafkaConsumer
 from google.cloud import bigquery
-from datetime import datetime, timedelta
 
-# Cấu hình logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# Thêm đường dẫn gốc của dự án vào sys.path để import config
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+try:
+    from config.settings import (
+        GCP_PROJECT_ID, BIGQUERY_DATASET, BIGQUERY_TABLES,
+        KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPICS, setup_logging
+    )
+    logger = setup_logging(__name__)
+except ImportError:
+    # Fallback nếu không import được config
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
+    
+    GCP_PROJECT_ID = os.environ.get('GCP_PROJECT_ID')
+    BIGQUERY_DATASET = os.environ.get('BIGQUERY_DATASET', 'weather_data')
+    BIGQUERY_TABLES = {
+        'STREAMING_HOURLY': 'weather_streaming_hourly'
+    }
+    KAFKA_BOOTSTRAP_SERVERS = os.environ.get('KAFKA_BOOTSTRAP_SERVERS', 'kafka:9092')
+    KAFKA_TOPICS = {
+        'RAW': 'weather-raw'
+    }
 
 class WeatherStreamProcessor:
+    """Processor for streaming weather data from Kafka to BigQuery"""
+    
     def __init__(self, max_retries=30, retry_interval=10):
+        """
+        Initialize the stream processor
+        
+        Args:
+            max_retries: Maximum number of connection retries
+            retry_interval: Seconds between retries
+        """
         logger.info("Initializing Weather Stream Processor")
         
         # Wait for Kafka to be ready
         logger.info("Waiting for Kafka to be ready...")
-        time.sleep(60)  # Give Kafka some time to start up
+        time.sleep(30)  # Give Kafka some time to start up
         
-        # Khởi tạo Kafka consumer with retry
+        # Initialize Kafka consumer with retry
+        self.consumer = self._init_kafka_consumer(max_retries, retry_interval)
+        
+        # Initialize BigQuery client
+        try:
+            self.bq_client = bigquery.Client()
+            self.project_id = GCP_PROJECT_ID
+            self.dataset_id = BIGQUERY_DATASET
+            self.table_id = BIGQUERY_TABLES.get('STREAMING_HOURLY', 'weather_streaming_hourly')
+            
+            # Check if BigQuery resources exist
+            self._check_bigquery_resources()
+            
+            logger.info("Weather stream processor initialized")
+        except Exception as e:
+            logger.error(f"Error initializing BigQuery client: {e}")
+            self.bq_client = None
+            
+        # Initialize variables for window calculations
+        self.city_data = {}  # Store data by city
+        self.window_size = timedelta(hours=1)  # 1 hour window
+    
+    def _init_kafka_consumer(self, max_retries, retry_interval):
+        """Initialize Kafka consumer with retry logic"""
         for attempt in range(max_retries):
             try:
                 logger.info(f"Attempt {attempt+1}/{max_retries} to connect to Kafka")
-                self.consumer = KafkaConsumer(
-                    'weather-raw',
-                    bootstrap_servers=['kafka:9092'],
+                consumer = KafkaConsumer(
+                    KAFKA_TOPICS.get('RAW', 'weather-raw'),
+                    bootstrap_servers=[KAFKA_BOOTSTRAP_SERVERS],
                     auto_offset_reset='earliest',
                     enable_auto_commit=True,
                     group_id='weather-stream-processor',
                     value_deserializer=lambda x: json.loads(x.decode('utf-8'))
                 )
                 logger.info("✅ Successfully connected to Kafka")
-                break
+                return consumer
             except Exception as e:
                 logger.warning(f"⏳ Attempt {attempt+1}/{max_retries}: Kafka not available yet ({e})")
                 if attempt < max_retries - 1:
@@ -43,75 +96,38 @@ class WeatherStreamProcessor:
                 else:
                     logger.error("❌ Failed to connect to Kafka after multiple attempts")
                     raise
-        
-        # Khởi tạo BigQuery client
-        try:
-            self.bq_client = bigquery.Client()
-            self.dataset_id = "weather_data"
-            self.table_id = "weather_streaming_hourly"
-            
-            # Đảm bảo dataset và table tồn tại
-            self.setup_bigquery()
-            
-            logger.info("Weather stream processor initialized")
-        except Exception as e:
-            logger.error(f"Error initializing BigQuery client: {e}")
-            # Continue without BigQuery if there's an error
-            self.bq_client = None
-            
-        # Khởi tạo các biến để tính toán thống kê
-        self.city_data = {}  # Lưu trữ dữ liệu theo thành phố
-        self.window_size = timedelta(hours=1)  # Cửa sổ 1 giờ
     
-    def setup_bigquery(self):
-        """Tạo dataset và table nếu chưa tồn tại"""
+    def _check_bigquery_resources(self):
+        """Check if BigQuery dataset and table exist"""
         if not self.bq_client:
-            logger.warning("BigQuery client not available, skipping setup")
+            logger.warning("BigQuery client not available, skipping resource check")
             return
             
         dataset_ref = self.bq_client.dataset(self.dataset_id)
         
         try:
             self.bq_client.get_dataset(dataset_ref)
-            logger.info(f"Dataset {self.dataset_id} already exists")
+            logger.info(f"Dataset {self.dataset_id} exists")
         except Exception:
-            # Create dataset
-            dataset = bigquery.Dataset(dataset_ref)
-            dataset.location = "US"
-            dataset = self.bq_client.create_dataset(dataset)
-            logger.info(f"Created dataset {self.dataset_id}")
-        
-        # Định nghĩa schema cho table
-        schema = [
-            bigquery.SchemaField("city_name", "STRING", mode="REQUIRED"),
-            bigquery.SchemaField("window_start", "TIMESTAMP", mode="REQUIRED"),
-            bigquery.SchemaField("window_end", "TIMESTAMP", mode="REQUIRED"),
-            bigquery.SchemaField("avg_temperature", "FLOAT"),
-            bigquery.SchemaField("max_temperature", "FLOAT"),
-            bigquery.SchemaField("min_temperature", "FLOAT"),
-            bigquery.SchemaField("avg_humidity", "FLOAT"),
-            bigquery.SchemaField("avg_pressure", "FLOAT"),
-            bigquery.SchemaField("processing_time", "TIMESTAMP", mode="REQUIRED")
-        ]
+            logger.error(f"Dataset {self.dataset_id} does not exist. It should be created by Terraform.")
+            raise
         
         table_ref = dataset_ref.table(self.table_id)
         try:
             self.bq_client.get_table(table_ref)
-            logger.info(f"Table {self.table_id} already exists")
+            logger.info(f"Table {self.table_id} exists")
         except Exception:
-            # Create table
-            table = bigquery.Table(table_ref, schema=schema)
-            table.time_partitioning = bigquery.TimePartitioning(
-                type_=bigquery.TimePartitioningType.DAY,
-                field="window_start"
-            )
-            table.clustering_fields = ["city_name"]
-            
-            table = self.bq_client.create_table(table)
-            logger.info(f"Created table {self.table_id}")
+            logger.error(f"Table {self.table_id} does not exist. It should be created by Terraform.")
+            raise
     
     def add_to_window(self, city, data):
-        """Add data to the current window for a city"""
+        """
+        Add data to the current window for a city
+        
+        Args:
+            city: City name
+            data: Weather data dictionary
+        """
         now = datetime.utcnow()
         window_start = datetime(now.year, now.month, now.day, now.hour)
         window_end = window_start + self.window_size
@@ -140,7 +156,13 @@ class WeatherStreamProcessor:
             self.process_window(city, window_key)
     
     def process_window(self, city, window_key):
-        """Process a completed window and send to BigQuery"""
+        """
+        Process a completed window and send to BigQuery
+        
+        Args:
+            city: City name
+            window_key: Window key (ISO format of window start time)
+        """
         window_data = self.city_data[city][window_key]
         temperatures = [t for t in window_data['temperatures'] if t is not None]
         humidities = [h for h in window_data['humidities'] if h is not None]
@@ -181,7 +203,7 @@ class WeatherStreamProcessor:
         # Insert into BigQuery if client is available
         if self.bq_client:
             try:
-                table_ref = f"{self.bq_client.project}.{self.dataset_id}.{self.table_id}"
+                table_ref = f"{self.project_id}.{self.dataset_id}.{self.table_id}"
                 errors = self.bq_client.insert_rows_json(table_ref, [row])
                 
                 if errors == []:
@@ -204,15 +226,46 @@ class WeatherStreamProcessor:
         del self.city_data[city][window_key]
     
     def process_message(self, message):
-        """Process a single message from Kafka"""
+        """
+        Process a single message from Kafka
+        
+        Args:
+            message: Kafka message
+        """
         try:
-            city = message.get('city_name')
+            data = message.value
+            city = data.get('city_name')
+            
             if not city:
-                logger.warning(f"Message missing city_name: {message}")
+                logger.warning(f"Message missing city_name: {data}")
                 return
             
+            # Extract relevant fields
+            temperature = None
+            humidity = None
+            pressure = None
+            
+            # Handle different message formats
+            if 'main' in data and isinstance(data['main'], dict):
+                temperature = data['main'].get('temp')
+                humidity = data['main'].get('humidity')
+                pressure = data['main'].get('pressure')
+            else:
+                temperature = data.get('temperature')
+                humidity = data.get('humidity')
+                pressure = data.get('pressure')
+            
+            # Create simplified data structure
+            processed_data = {
+                'city_name': city,
+                'temperature': temperature,
+                'humidity': humidity,
+                'pressure': pressure,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+            
             # Add to current window
-            self.add_to_window(city, message)
+            self.add_to_window(city, processed_data)
                 
         except Exception as e:
             logger.error(f"Error processing message: {str(e)}")
@@ -223,9 +276,8 @@ class WeatherStreamProcessor:
         
         try:
             for message in self.consumer:
-                data = message.value
-                logger.info(f"Received message: {data}")
-                self.process_message(data)
+                logger.info(f"Received message: {message.value}")
+                self.process_message(message)
                 
                 # Check for completed windows
                 now = datetime.utcnow()
@@ -243,6 +295,7 @@ class WeatherStreamProcessor:
             logger.info("Stream processor closed")
 
 def main():
+    """Main entry point"""
     try:
         processor = WeatherStreamProcessor()
         processor.run()

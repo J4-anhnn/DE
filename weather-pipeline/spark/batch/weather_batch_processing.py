@@ -1,145 +1,169 @@
-#!/usr/bin/env python3
+#!/usr/bin/env_python3
 """
-Spark batch job to process weather data from GCS and load into BigQuery
+Spark_batch_job_to_process_weather_data_from_GCS_and_load_into_BigQuery
 """
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, from_json, to_timestamp, expr, current_timestamp
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
-import argparse
-from datetime import datetime
+from_pyspark.sql_import_SparkSession
+from_pyspark.sql.functions_import_col,_from_json,_to_timestamp,_expr,_current_timestamp,_lit
+from_pyspark.sql.types_import_StructType,_StructField,_StringType,_DoubleType,_TimestampType
+import_argparse
+from_datetime_import_datetime
+import_os
+import_sys
+import_json
 
-def create_spark_session():
-    """Create and configure Spark session"""
-    return (SparkSession.builder
-            .appName("WeatherBatchProcessing")
-            .config("spark.jars", "gs://spark-lib/bigquery/spark-bigquery-latest_2.12.jar")
-            .getOrCreate())
+#_Thêm_đường_dẫn_gốc_của_dự_án_vào_sys.path_để_import_config
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__),_'../..')))
+try:
+____from_config.settings_import_GCP_PROJECT_ID,_BIGQUERY_DATASET,_BIGQUERY_TABLES,_get_schema_path
+except_ImportError:
+____#_Fallback_nếu_không_import_được_config
+____GCP_PROJECT_ID_=_os.environ.get('GCP_PROJECT_ID')
+____BIGQUERY_DATASET_=_os.environ.get('BIGQUERY_DATASET',_'weather_data')
+____BIGQUERY_TABLES_=_{
+________'BATCH':_'weather_batch'
+____}
+____
+____def_get_schema_path(table_name):
+________return_None
 
-def process_weather_data(spark, input_path, output_table, processing_date):
-    """Process weather data from GCS and load into BigQuery"""
-    # Define schema for raw weather data
-    schema = StructType([
-        StructField("coord", StructType([
-            StructField("lon", DoubleType()),
-            StructField("lat", DoubleType())
-        ])),
-        StructField("weather", StringType()),
-        StructField("base", StringType()),
-        StructField("main", StructType([
-            StructField("temp", DoubleType()),
-            StructField("feels_like", DoubleType()),
-            StructField("temp_min", DoubleType()),
-            StructField("temp_max", DoubleType()),
-            StructField("pressure", DoubleType()),
-            StructField("humidity", DoubleType())
-        ])),
-        StructField("visibility", DoubleType()),
-        StructField("wind", StructType([
-            StructField("speed", DoubleType()),
-            StructField("deg", DoubleType())
-        ])),
-        StructField("clouds", StructType([
-            StructField("all", DoubleType())
-        ])),
-        StructField("dt", DoubleType()),
-        StructField("sys", StructType([
-            StructField("type", DoubleType()),
-            StructField("id", DoubleType()),
-            StructField("country", StringType()),
-            StructField("sunrise", DoubleType()),
-            StructField("sunset", DoubleType())
-        ])),
-        StructField("timezone", DoubleType()),
-        StructField("id", DoubleType()),
-        StructField("name", StringType()),
-        StructField("cod", DoubleType()),
-        StructField("city_name", StringType()),
-        StructField("collected_at", StringType()),
-        StructField("airflow_execution_date", StringType()),
-        StructField("airflow_dag_run_id", StringType())
-    ])
-    
-    # Read JSON files from GCS
-    df = spark.read.schema(schema).json(input_path)
-    
-    # Extract and transform data
-    processed_df = df.select(
-        col("city_name"),
-        col("name").alias("city_original_name"),
-        col("coord.lon").alias("longitude"),
-        col("coord.lat").alias("latitude"),
-        col("main.temp").alias("temperature"),
-        col("main.feels_like").alias("feels_like"),
-        col("main.humidity").alias("humidity"),
-        col("main.pressure").alias("pressure"),
-        col("wind.speed").alias("wind_speed"),
-        col("wind.deg").alias("wind_direction"),
-        col("clouds.all").alias("cloudiness"),
-        expr("explode(from_json(weather, 'array<struct<main:string,description:string>>'))").alias("weather_data"),
-        to_timestamp(col("dt")).alias("measurement_time"),
-        to_timestamp(col("sys.sunrise")).alias("sunrise"),
-        to_timestamp(col("sys.sunset")).alias("sunset"),
-        current_timestamp().alias("processing_time"),
-        to_timestamp(lit(processing_date)).cast("date").alias("processing_date")
-    )
-    
-    # Extract weather condition and description
-    final_df = processed_df.select(
-        col("city_name"),
-        col("city_original_name"),
-        col("longitude"),
-        col("latitude"),
-        col("temperature"),
-        col("feels_like"),
-        col("humidity"),
-        col("pressure"),
-        col("wind_speed"),
-        col("wind_direction"),
-        col("cloudiness"),
-        col("weather_data.main").alias("weather_condition"),
-        col("weather_data.description").alias("weather_description"),
-        col("measurement_time"),
-        col("sunrise"),
-        col("sunset"),
-        col("processing_time"),
-        col("processing_date"),
-        expr("(unix_timestamp(sunset) - unix_timestamp(sunrise)) / 3600").alias("day_length_hours")
-    )
-    
-    # Write to BigQuery
-    final_df.write \
-        .format("bigquery") \
-        .option("table", output_table) \
-        .option("temporaryGcsBucket", "weather-temp-bucket") \
-        .mode("append") \
-        .save()
-    
-    return final_df.count()
+def_create_spark_session():
+____"""Create_and_configure_Spark_session"""
+____return_(SparkSession.builder
+____________.appName("WeatherBatchProcessing")
+____________.config("spark.jars",_"gs://spark-lib/bigquery/spark-bigquery-latest_2.12.jar")
+____________.getOrCreate())
 
-def main():
-    """Main entry point"""
-    parser = argparse.ArgumentParser(description='Process weather data from GCS to BigQuery')
-    parser.add_argument('--input_path', required=True, help='GCS path to input data')
-    parser.add_argument('--output_table', required=True, help='BigQuery output table (project.dataset.table)')
-    parser.add_argument('--processing_date', required=True, help='Processing date (YYYY-MM-DD)')
-    
-    args = parser.parse_args()
-    
-    spark = create_spark_session()
-    
-    try:
-        record_count = process_weather_data(
-            spark, 
-            args.input_path, 
-            args.output_table, 
-            args.processing_date
-        )
-        print(f"Successfully processed {record_count} weather records")
-    except Exception as e:
-        print(f"Error processing weather data: {str(e)}")
-        raise
-    finally:
-        spark.stop()
+def_process_weather_data(spark,_input_path,_output_table,_processing_date):
+____"""Process_weather_data_from_GCS_and_load_into_BigQuery"""
+____#_Define_schema_for_raw_weather_data
+____schema_=_StructType([
+________StructField("coord",_StructType([
+____________StructField("lon",_DoubleType()),
+____________StructField("lat",_DoubleType())
+________])),
+________StructField("weather",_StringType()),
+________StructField("base",_StringType()),
+________StructField("main",_StructType([
+____________StructField("temp",_DoubleType()),
+____________StructField("feels_like",_DoubleType()),
+____________StructField("temp_min",_DoubleType()),
+____________StructField("temp_max",_DoubleType()),
+____________StructField("pressure",_DoubleType()),
+____________StructField("humidity",_DoubleType())
+________])),
+________StructField("visibility",_DoubleType()),
+________StructField("wind",_StructType([
+____________StructField("speed",_DoubleType()),
+____________StructField("deg",_DoubleType())
+________])),
+________StructField("clouds",_StructType([
+____________StructField("all",_DoubleType())
+________])),
+________StructField("dt",_DoubleType()),
+________StructField("sys",_StructType([
+____________StructField("type",_DoubleType()),
+____________StructField("id",_DoubleType()),
+____________StructField("country",_StringType()),
+____________StructField("sunrise",_DoubleType()),
+____________StructField("sunset",_DoubleType())
+________])),
+________StructField("timezone",_DoubleType()),
+________StructField("id",_DoubleType()),
+________StructField("name",_StringType()),
+________StructField("cod",_DoubleType()),
+________StructField("city_name",_StringType()),
+________StructField("collected_at",_StringType()),
+________StructField("airflow_execution_date",_StringType()),
+________StructField("airflow_dag_run_id",_StringType())
+____])
+____
+____#_Read_JSON_files_from_GCS
+____df_=_spark.read.schema(schema).json(input_path)
+____
+____#_Extract_and_transform_data
+____processed_df_=_df.select(
+________col("city_name"),
+________col("name").alias("city_original_name"),
+________col("coord.lon").alias("longitude"),
+________col("coord.lat").alias("latitude"),
+________col("main.temp").alias("temperature"),
+________col("main.feels_like").alias("feels_like"),
+________col("main.humidity").alias("humidity"),
+________col("main.pressure").alias("pressure"),
+________col("wind.speed").alias("wind_speed"),
+________col("wind.deg").alias("wind_direction"),
+________col("clouds.all").alias("cloudiness"),
+________expr("explode(from_json(weather,_'array<struct<main:string,description:string>>'))")
+____________.alias("weather_data"),
+________to_timestamp(col("dt")).alias("measurement_time"),
+________to_timestamp(col("sys.sunrise")).alias("sunrise"),
+________to_timestamp(col("sys.sunset")).alias("sunset"),
+________current_timestamp().alias("processing_time"),
+________to_timestamp(lit(processing_date)).cast("date").alias("processing_date")
+____)
+____
+____#_Extract_weather_condition_and_description
+____final_df_=_processed_df.select(
+________col("city_name"),
+________col("city_original_name"),
+________col("longitude"),
+________col("latitude"),
+________col("temperature"),
+________col("feels_like"),
+________col("humidity"),
+________col("pressure"),
+________col("wind_speed"),
+________col("wind_direction"),
+________col("cloudiness"),
+________col("weather_data.main").alias("weather_condition"),
+________col("weather_data.description").alias("weather_description"),
+________col("measurement_time"),
+________col("sunrise"),
+________col("sunset"),
+________col("processing_time"),
+________col("processing_date"),
+________expr("(unix_timestamp(sunset)_-_unix_timestamp(sunrise))_/_3600").alias("day_length_hours")
+____)
+____
+____#_Write_to_BigQuery
+____final_df.write_\
+________.format("bigquery")_\
+________.option("table",_output_table)_\
+________.option("temporaryGcsBucket",_"weather-temp-bucket")_\
+________.mode("append")_\
+________.save()
+____
+____return_final_df.count()
 
-if __name__ == "__main__":
-    main()
+def_main():
+____"""Main_entry_point"""
+____parser_=_argparse.ArgumentParser(description='Process_weather_data_from_GCS_to_BigQuery')
+____parser.add_argument('--input_path',_required=True,_help='GCS_path_to_input_data')
+____parser.add_argument('--output_table',_help='BigQuery_output_table_(project.dataset.table)')
+____parser.add_argument('--processing_date',_required=True,_help='Processing_date_(YYYY-MM-DD)')
+____
+____args_=_parser.parse_args()
+____
+____#_Nếu_không_có_output_table,_sử_dụng_cấu_hình_mặc_định
+____output_table_=_args.output_table
+____if_not_output_table:
+________output_table_=_f"{GCP_PROJECT_ID}.{BIGQUERY_DATASET}.{BIGQUERY_TABLES['BATCH']}"
+____
+____spark_=_create_spark_session()
+____
+____try:
+________record_count_=_process_weather_data(
+____________spark,_
+____________args.input_path,_
+____________output_table,_
+____________args.processing_date
+________)
+________print(f"Successfully_processed_{record_count}_weather_records")
+____except_Exception_as_e:
+________print(f"Error_processing_weather_data:_{str(e)}")
+________raise
+____finally:
+________spark.stop()
+
+if___name___==_"__main__":
+____main()
